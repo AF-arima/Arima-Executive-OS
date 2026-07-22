@@ -1,0 +1,19 @@
+[project]
+name = "arima-executive-os"
+version = "0.1.0"
+description = ""
+authors = []
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic-settings",
+]
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "httpx",
+    "ruff",
+    "mypy",
+]
+[build-system]
+requires = ["setuptools", "wheel"]
