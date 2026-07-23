@@ -12,7 +12,7 @@ def record_audit(
     action: AuditAction,
     entity: AuditEntity,
     entity_id: UUID,
-    project_id: UUID,
+    project_id: UUID | None = None,
 ) -> None:
     session.add(
         AuditLog(

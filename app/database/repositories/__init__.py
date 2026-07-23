@@ -11,6 +11,15 @@ from app.database.repositories.analytics import (
 )
 from app.database.repositories.audit_log import AuditLogRepository
 from app.database.repositories.base import AsyncRepository
+from app.database.repositories.crm import (
+    CRMActivityFilters,
+    CRMRepository,
+    CompanyFilters,
+    ContactFilters,
+    DealFilters,
+    LeadFilters,
+    NoteFilters,
+)
 from app.database.repositories.notification import NotificationRepository
 from app.database.repositories.pagination import Page
 from app.database.repositories.project import ProjectFilters, ProjectRepository
@@ -20,6 +29,13 @@ from app.database.repositories.task import TaskFilters, TaskRepository
 from app.database.repositories.user import UserRepository
 
 __all__ = [
+    "CRMActivityFilters",
+    "CRMRepository",
+    "CompanyFilters",
+    "ContactFilters",
+    "DealFilters",
+    "LeadFilters",
+    "NoteFilters",
     "AuditLogRepository",
     "ActivityRepository",
     "ActivityRow",

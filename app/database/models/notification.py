@@ -28,6 +28,13 @@ class NotificationType(str, Enum):
     TASK_OVERDUE = "task_overdue"
     PROJECT_STATUS_CHANGED = "project_status_changed"
     SYSTEM = "system"
+    LEAD_ASSIGNED = "lead_assigned"
+    DEAL_ASSIGNED = "deal_assigned"
+    DEAL_STAGE_CHANGED = "deal_stage_changed"
+    LEAD_QUALIFIED = "lead_qualified"
+    LEAD_CONVERTED = "lead_converted"
+    FOLLOW_UP_DUE = "follow_up_due"
+    CRM_ACTIVITY_ASSIGNED = "crm_activity_assigned"
 
 
 class Notification(UUIDPrimaryKeyMixin, Base):

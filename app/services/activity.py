@@ -77,5 +77,8 @@ class ActivityService:
             AuditAction.DELETE: "deleted",
             AuditAction.ASSIGNMENT: "changed assignment for",
             AuditAction.STATUS_CHANGE: "changed status for",
+            AuditAction.CONVERT: "converted",
+            AuditAction.STAGE_CHANGE: "changed stage for",
+            AuditAction.COMPLETE: "completed",
         }
         return f"{labels[action]} {entity.value}"

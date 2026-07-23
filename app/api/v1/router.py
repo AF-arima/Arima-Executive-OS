@@ -5,6 +5,7 @@ from app.api.v1.routes import (
     admin,
     analytics,
     auth,
+    crm,
     dashboard,
     notifications,
     projects,
@@ -20,3 +21,4 @@ api_router.include_router(dashboard.router)
 api_router.include_router(analytics.router)
 api_router.include_router(activity.router)
 api_router.include_router(notifications.router)
+api_router.include_router(crm.router)

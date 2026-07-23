@@ -60,6 +60,30 @@ def enqueue_project_status_change(
     )
 
 
+def enqueue_crm_notification(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    notification_type: NotificationType,
+    entity_type: str,
+    entity_id: UUID,
+    title: str,
+    message: str,
+    dedupe_key: str | None = None,
+) -> None:
+    session.add(
+        Notification(
+            user_id=user_id,
+            type=notification_type,
+            title=title,
+            message=message,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            dedupe_key=dedupe_key,
+        )
+    )
+
+
 class NotificationService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -187,6 +211,63 @@ class NotificationService:
                 if not await self.repository.dedupe_key_exists(
                     dedupe_key
                 ):
+                    raise error
+                continue
+            created += 1
+        await self.session.commit()
+        return created
+
+    async def create_crm_due_notifications(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> int:
+        current = now or datetime.now(UTC)
+        leads, activities = await self.repository.crm_due_candidates(
+            due_before=current + timedelta(days=7)
+        )
+        candidates = [
+            (
+                lead.owner_id,
+                "lead",
+                lead.id,
+                lead.next_follow_up_at,
+                NotificationType.FOLLOW_UP_DUE,
+            )
+            for lead in leads
+        ] + [
+            (
+                activity.assigned_to,
+                "crm_activity",
+                activity.id,
+                activity.due_at,
+                NotificationType.CRM_ACTIVITY_ASSIGNED,
+            )
+            for activity in activities
+        ]
+        created = 0
+        for user_id, entity_type, entity_id, due_at, kind in candidates:
+            if user_id is None or due_at is None:
+                continue
+            dedupe_key = (
+                f"{kind.value}:{entity_type}:{entity_id}:"
+                f"{self._as_utc(due_at).isoformat()}"
+            )
+            notification = Notification(
+                user_id=user_id,
+                type=kind,
+                title="CRM follow-up due",
+                message="A CRM follow-up is due within seven days.",
+                entity_type=entity_type,
+                entity_id=entity_id,
+                dedupe_key=dedupe_key,
+            )
+            try:
+                async with self.session.begin_nested():
+                    self.session.add(notification)
+                    await self.session.flush()
+            except IntegrityError as error:
+                if not await self.repository.dedupe_key_exists(dedupe_key):
                     raise error
                 continue
             created += 1

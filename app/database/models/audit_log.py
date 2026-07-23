@@ -26,11 +26,22 @@ class AuditAction(str, Enum):
     DELETE = "delete"
     ASSIGNMENT = "assignment"
     STATUS_CHANGE = "status_change"
+    CONVERT = "convert"
+    STAGE_CHANGE = "stage_change"
+    COMPLETE = "complete"
 
 
 class AuditEntity(str, Enum):
     PROJECT = "project"
     TASK = "task"
+    COMPANY = "company"
+    CONTACT = "contact"
+    LEAD = "lead"
+    PIPELINE = "pipeline"
+    PIPELINE_STAGE = "pipeline_stage"
+    DEAL = "deal"
+    CRM_NOTE = "crm_note"
+    CRM_ACTIVITY = "crm_activity"
 
 
 class AuditLog(UUIDPrimaryKeyMixin, Base):

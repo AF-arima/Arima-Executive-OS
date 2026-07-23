@@ -57,6 +57,51 @@ def workload_scope(user: User) -> AnalyticsScope:
     return scope
 
 
+def crm_scope(user: User) -> AnalyticsScope:
+    roles = user_roles(user)
+    if FULL_ACCESS_ROLES.intersection(roles):
+        kind = VisibilityKind.GLOBAL
+    elif "manager" in roles:
+        kind = VisibilityKind.OWNED
+    else:
+        kind = VisibilityKind.ASSIGNED
+    return AnalyticsScope(
+        kind=kind,
+        user_id=user.id,
+        roles=tuple(sorted(roles)),
+    )
+
+
+def can_create_crm(user: User) -> bool:
+    roles = user_roles(user)
+    return bool(
+        FULL_ACCESS_ROLES.intersection(roles)
+        or "manager" in roles
+    )
+
+
+def can_contribute_crm(user: User) -> bool:
+    return can_create_crm(user) or "analyst" in user_roles(user)
+
+
+def can_manage_crm_record(
+    user: User,
+    *,
+    owner_id: UUID | None,
+    created_by: UUID,
+) -> bool:
+    if has_full_access(user):
+        return True
+    roles = user_roles(user)
+    if "manager" in roles:
+        return owner_id == user.id or created_by == user.id
+    return "analyst" in roles and owner_id == user.id
+
+
+def can_manage_pipelines(user: User) -> bool:
+    return has_full_access(user)
+
+
 def can_create_project(user: User) -> bool:
     roles = user_roles(user)
     return bool(FULL_ACCESS_ROLES.intersection(roles) or "manager" in roles)

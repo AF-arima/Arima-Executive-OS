@@ -107,6 +107,36 @@ def test_initial_migration_matches_metadata_and_downgrades(
         constraint["name"]
         for constraint in inspector.get_unique_constraints("notifications")
     } == {"uq_notifications_dedupe_key"}
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("crm_notes")
+    } == {"ck_crm_notes_exactly_one_parent"}
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("crm_activities")
+    } == {
+        "ck_crm_activities_crm_activity_type",
+        "ck_crm_activities_has_parent",
+    }
+    assert {
+        "ix_crm_companies_owner_status",
+        "ix_crm_companies_archived_at",
+        "uq_crm_companies_domain",
+    }.issubset(
+        {
+            index["name"]
+            for index in inspector.get_indexes("crm_companies")
+        }
+    )
+    assert {
+        "ix_crm_deals_pipeline_stage",
+        "ix_crm_deals_owner_status",
+        "ix_crm_deals_expected_close_date",
+    }.issubset(
+        {
+            index["name"] for index in inspector.get_indexes("crm_deals")
+        }
+    )
     engine.dispose()
 
     command.check(config)

@@ -6,7 +6,14 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Notification, NotificationType, Project, Task
+from app.database.models import (
+    CRMActivity,
+    Lead,
+    Notification,
+    NotificationType,
+    Project,
+    Task,
+)
 from app.database.repositories.base import AsyncRepository
 from app.database.repositories.pagination import Page
 
@@ -138,3 +145,30 @@ class NotificationRepository(AsyncRepository[Notification]):
             )
         )
         return value is not None
+
+    async def crm_due_candidates(
+        self,
+        *,
+        due_before: datetime,
+    ) -> tuple[list[Lead], list[CRMActivity]]:
+        leads = await self.session.scalars(
+            select(Lead)
+            .where(
+                Lead.owner_id.is_not(None),
+                Lead.archived_at.is_(None),
+                Lead.next_follow_up_at.is_not(None),
+                Lead.next_follow_up_at <= due_before,
+            )
+            .order_by(Lead.id)
+        )
+        activities = await self.session.scalars(
+            select(CRMActivity)
+            .where(
+                CRMActivity.assigned_to.is_not(None),
+                CRMActivity.completed_at.is_(None),
+                CRMActivity.due_at.is_not(None),
+                CRMActivity.due_at <= due_before,
+            )
+            .order_by(CRMActivity.id)
+        )
+        return list(leads.all()), list(activities.all())

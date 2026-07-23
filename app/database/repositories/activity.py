@@ -18,6 +18,12 @@ from app.database.models import (
     AuditAction,
     AuditEntity,
     AuditLog,
+    CRMActivity,
+    CRMNote,
+    Company,
+    Contact,
+    Deal,
+    Lead,
     Project,
     Task,
 )
@@ -154,24 +160,152 @@ class ActivityRepository:
     def _visibility_condition(
         scope: AnalyticsScope,
     ) -> ColumnElement[bool]:
-        if scope.kind is VisibilityKind.GLOBAL:
-            return true()
-        if scope.kind is VisibilityKind.OWNED:
-            return Project.owner_id == scope.user_id
-        assigned_projects = select(Task.project_id).where(
-            Task.assignee_id == scope.user_id
+        full_access = not frozenset(
+            {"administrator", "executive"}
+        ).isdisjoint(scope.roles)
+        project_entities = (
+            AuditEntity.PROJECT,
+            AuditEntity.TASK,
         )
+        crm_entities = tuple(
+            item for item in AuditEntity if item not in project_entities
+        )
+        if scope.kind is VisibilityKind.GLOBAL:
+            project_visibility: ColumnElement[bool] = true()
+        elif scope.kind is VisibilityKind.OWNED:
+            project_visibility = Project.owner_id == scope.user_id
+        else:
+            assigned_projects = select(Task.project_id).where(
+                Task.assignee_id == scope.user_id
+            )
+            project_visibility = or_(
+                and_(
+                    AuditLog.entity == AuditEntity.PROJECT,
+                    AuditLog.project_id.in_(assigned_projects),
+                ),
+                and_(
+                    AuditLog.entity == AuditEntity.TASK,
+                    AuditLog.entity_id.in_(
+                        select(Task.id).where(
+                            Task.assignee_id == scope.user_id
+                        )
+                    ),
+                ),
+            )
+        if full_access:
+            crm_visibility: ColumnElement[bool] = true()
+        else:
+            crm_visibility = or_(
+                and_(
+                    AuditLog.entity == AuditEntity.COMPANY,
+                    AuditLog.entity_id.in_(
+                        select(Company.id).where(
+                            or_(
+                                Company.owner_id == scope.user_id,
+                                Company.created_by == scope.user_id,
+                            )
+                        )
+                    ),
+                ),
+                and_(
+                    AuditLog.entity == AuditEntity.CONTACT,
+                    AuditLog.entity_id.in_(
+                        select(Contact.id).where(
+                            or_(
+                                Contact.owner_id == scope.user_id,
+                                Contact.created_by == scope.user_id,
+                            )
+                        )
+                    ),
+                ),
+                and_(
+                    AuditLog.entity == AuditEntity.LEAD,
+                    AuditLog.entity_id.in_(
+                        select(Lead.id).where(
+                            or_(
+                                Lead.owner_id == scope.user_id,
+                                Lead.created_by == scope.user_id,
+                            )
+                        )
+                    ),
+                ),
+                and_(
+                    AuditLog.entity == AuditEntity.DEAL,
+                    AuditLog.entity_id.in_(
+                        select(Deal.id).where(
+                            Deal.owner_id == scope.user_id
+                        )
+                    ),
+                ),
+                and_(
+                    AuditLog.entity == AuditEntity.CRM_NOTE,
+                    AuditLog.entity_id.in_(
+                        select(CRMNote.id).where(
+                            or_(
+                                CRMNote.author_id == scope.user_id,
+                                CRMNote.company_id.in_(
+                                    select(Company.id).where(
+                                        Company.owner_id == scope.user_id
+                                    )
+                                ),
+                                CRMNote.contact_id.in_(
+                                    select(Contact.id).where(
+                                        Contact.owner_id == scope.user_id
+                                    )
+                                ),
+                                CRMNote.lead_id.in_(
+                                    select(Lead.id).where(
+                                        Lead.owner_id == scope.user_id
+                                    )
+                                ),
+                                CRMNote.deal_id.in_(
+                                    select(Deal.id).where(
+                                        Deal.owner_id == scope.user_id
+                                    )
+                                ),
+                            )
+                        )
+                    ),
+                ),
+                and_(
+                    AuditLog.entity == AuditEntity.CRM_ACTIVITY,
+                    AuditLog.entity_id.in_(
+                        select(CRMActivity.id).where(
+                            or_(
+                                CRMActivity.actor_id == scope.user_id,
+                                CRMActivity.assigned_to == scope.user_id,
+                                CRMActivity.company_id.in_(
+                                    select(Company.id).where(
+                                        Company.owner_id == scope.user_id
+                                    )
+                                ),
+                                CRMActivity.contact_id.in_(
+                                    select(Contact.id).where(
+                                        Contact.owner_id == scope.user_id
+                                    )
+                                ),
+                                CRMActivity.lead_id.in_(
+                                    select(Lead.id).where(
+                                        Lead.owner_id == scope.user_id
+                                    )
+                                ),
+                                CRMActivity.deal_id.in_(
+                                    select(Deal.id).where(
+                                        Deal.owner_id == scope.user_id
+                                    )
+                                ),
+                            )
+                        )
+                    ),
+                ),
+            )
         return or_(
             and_(
-                AuditLog.entity == AuditEntity.PROJECT,
-                AuditLog.project_id.in_(assigned_projects),
+                AuditLog.entity.in_(project_entities),
+                project_visibility,
             ),
             and_(
-                AuditLog.entity == AuditEntity.TASK,
-                AuditLog.entity_id.in_(
-                    select(Task.id).where(
-                        Task.assignee_id == scope.user_id
-                    )
-                ),
+                AuditLog.entity.in_(crm_entities),
+                crm_visibility,
             ),
         )

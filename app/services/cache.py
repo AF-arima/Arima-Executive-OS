@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Protocol
 
+from pydantic import BaseModel
+
 from app.schemas.analytics import DashboardSummary
 
 
@@ -78,3 +80,49 @@ class InMemoryDashboardCache:
 
 
 dashboard_cache = InMemoryDashboardCache()
+
+
+@dataclass(slots=True)
+class _ModelCacheEntry:
+    value: BaseModel
+    expires_at: float
+    namespace: int
+
+
+class InMemoryModelCache:
+    """Short-lived, process-local cache for permission-scoped API models."""
+
+    def __init__(self) -> None:
+        self._entries: dict[str, _ModelCacheEntry] = {}
+        self._namespace = 0
+        self._lock = asyncio.Lock()
+
+    async def get(self, key: str) -> BaseModel | None:
+        async with self._lock:
+            entry = self._entries.get(key)
+            if (
+                entry is None
+                or entry.namespace != self._namespace
+                or entry.expires_at <= monotonic()
+            ):
+                self._entries.pop(key, None)
+                return None
+            return entry.value.model_copy(deep=True)
+
+    async def set(
+        self, key: str, value: BaseModel, *, ttl_seconds: int = 60
+    ) -> None:
+        async with self._lock:
+            self._entries[key] = _ModelCacheEntry(
+                value=value.model_copy(deep=True),
+                expires_at=monotonic() + ttl_seconds,
+                namespace=self._namespace,
+            )
+
+    async def invalidate(self) -> None:
+        async with self._lock:
+            self._namespace += 1
+            self._entries.clear()
+
+
+crm_analytics_cache = InMemoryModelCache()

@@ -19,7 +19,13 @@ from app.schemas.analytics import (
     WorkloadSortField,
 )
 from app.schemas.common import SortDirection
+from app.schemas.crm import (
+    CRMActivityAnalytics,
+    CRMLeadAnalytics,
+    CRMPipelineAnalytics,
+)
 from app.services.analytics import AnalyticsService
+from app.services.crm_analytics import CRMAnalyticsService
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -140,4 +146,67 @@ async def workload_analytics(
         direction=direction,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.get(
+    "/crm/pipeline",
+    response_model=CRMPipelineAnalytics,
+    summary="Get permission-scoped CRM pipeline analytics",
+    responses=AUTHENTICATED_RESPONSES,
+)
+async def crm_pipeline_analytics(
+    session: SessionDependency,
+    current_user: AnalyticsUser,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    refresh: bool = False,
+) -> CRMPipelineAnalytics:
+    return await CRMAnalyticsService(session).pipeline(
+        current_user,
+        start_date=start_date,
+        end_date=end_date,
+        refresh=refresh,
+    )
+
+
+@router.get(
+    "/crm/leads",
+    response_model=CRMLeadAnalytics,
+    summary="Get permission-scoped CRM lead analytics",
+    responses=AUTHENTICATED_RESPONSES,
+)
+async def crm_lead_analytics(
+    session: SessionDependency,
+    current_user: AnalyticsUser,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    refresh: bool = False,
+) -> CRMLeadAnalytics:
+    return await CRMAnalyticsService(session).leads(
+        current_user,
+        start_date=start_date,
+        end_date=end_date,
+        refresh=refresh,
+    )
+
+
+@router.get(
+    "/crm/activities",
+    response_model=CRMActivityAnalytics,
+    summary="Get permission-scoped CRM activity analytics",
+    responses=AUTHENTICATED_RESPONSES,
+)
+async def crm_activity_analytics(
+    session: SessionDependency,
+    current_user: AnalyticsUser,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    refresh: bool = False,
+) -> CRMActivityAnalytics:
+    return await CRMAnalyticsService(session).activities(
+        current_user,
+        start_date=start_date,
+        end_date=end_date,
+        refresh=refresh,
     )
