@@ -41,6 +41,7 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             values_callable=lambda enum: [item.value for item in enum],
         ),
         default=ProjectStatus.PLANNING,
+        index=True,
         nullable=False,
     )
     owner_id: Mapped[UUID] = mapped_column(
@@ -59,6 +60,7 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     target_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
+        index=True,
         nullable=True,
     )
 
@@ -77,6 +79,7 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     __table_args__ = (
+        Index("ix_projects_created_at", "created_at"),
         Index(
             "uq_projects_owner_name_active",
             owner_id,

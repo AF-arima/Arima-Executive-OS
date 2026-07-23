@@ -12,3 +12,7 @@ class ResourceConflictError(ServiceError):
 
 class PermissionDeniedError(ServiceError):
     pass
+
+
+class InvalidAnalyticsRequestError(ServiceError):
+    pass

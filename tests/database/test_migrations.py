@@ -54,6 +54,25 @@ def test_initial_migration_matches_metadata_and_downgrades(
         index["name"] for index in inspector.get_indexes("users")
     } == {"ix_users_email"}
     assert {
+        "ix_projects_archived_at",
+        "ix_projects_created_at",
+        "ix_projects_status",
+    }.issubset(
+        {
+            index["name"]
+            for index in inspector.get_indexes("projects")
+        }
+    )
+    assert {
+        "ix_tasks_created_at",
+        "ix_tasks_due_date",
+        "ix_tasks_status",
+    }.issubset(
+        {
+            index["name"] for index in inspector.get_indexes("tasks")
+        }
+    )
+    assert {
         constraint["name"]
         for constraint in inspector.get_check_constraints("tasks")
     } == {"ck_tasks_task_priority", "ck_tasks_task_status"}
@@ -66,9 +85,28 @@ def test_initial_migration_matches_metadata_and_downgrades(
         for index in inspector.get_indexes("audit_logs")
     } == {
         "ix_audit_logs_actor_id",
+        "ix_audit_logs_actor_timestamp",
+        "ix_audit_logs_entity_action_timestamp",
         "ix_audit_logs_entity_id",
+        "ix_audit_logs_project_timestamp",
         "ix_audit_logs_timestamp",
     }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("notifications")
+    } == {"ck_notifications_notification_type"}
+    assert {
+        index["name"]
+        for index in inspector.get_indexes("notifications")
+    } == {
+        "ix_notifications_expires_at",
+        "ix_notifications_user_created",
+        "ix_notifications_user_read_created",
+    }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("notifications")
+    } == {"uq_notifications_dedupe_key"}
     engine.dispose()
 
     command.check(config)
@@ -168,5 +206,115 @@ def test_management_migration_backfills_existing_rows(
     }
     assert "created_by" not in {
         column["name"] for column in inspector.get_columns("tasks")
+    }
+    engine.dispose()
+
+
+def test_dashboard_migration_backfills_audit_project_scope(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard-backfill.sqlite3"
+    async_url = f"sqlite+aiosqlite:///{database_path}"
+    sync_url = f"sqlite:///{database_path}"
+    config = migration_config(async_url)
+    command.upgrade(config, "20260723_0003")
+
+    user_id = uuid4().hex
+    project_id = uuid4().hex
+    task_id = uuid4().hex
+    project_audit_id = uuid4().hex
+    task_audit_id = uuid4().hex
+    timestamp = "2026-07-23 12:00:00+00:00"
+    engine = create_engine(sync_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users "
+                "(email, hashed_password, first_name, last_name, "
+                "is_active, is_verified, id, created_at, updated_at) "
+                "VALUES ('audit@example.com', 'hashed', 'Audit', "
+                "'User', 1, 0, :id, :created_at, :updated_at)"
+            ),
+            {
+                "id": user_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO projects "
+                "(name, status, owner_id, created_by, id, "
+                "created_at, updated_at) VALUES "
+                "('Audit project', 'active', :user_id, :user_id, "
+                ":id, :created_at, :updated_at)"
+            ),
+            {
+                "user_id": user_id,
+                "id": project_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO tasks "
+                "(title, status, priority, project_id, created_by, id, "
+                "created_at, updated_at) VALUES "
+                "('Audit task', 'todo', 'medium', :project_id, "
+                ":user_id, :id, :created_at, :updated_at)"
+            ),
+            {
+                "project_id": project_id,
+                "user_id": user_id,
+                "id": task_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+        )
+        for audit_id, entity, entity_id in (
+            (project_audit_id, "project", project_id),
+            (task_audit_id, "task", task_id),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO audit_logs "
+                    "(actor_id, action, entity, entity_id, timestamp, id) "
+                    "VALUES (:actor_id, 'create', :entity, :entity_id, "
+                    ":timestamp, :id)"
+                ),
+                {
+                    "actor_id": user_id,
+                    "entity": entity,
+                    "entity_id": entity_id,
+                    "timestamp": timestamp,
+                    "id": audit_id,
+                },
+            )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = create_engine(sync_url)
+    with engine.connect() as connection:
+        project_ids = connection.execute(
+            text(
+                "SELECT project_id FROM audit_logs "
+                "ORDER BY entity, id"
+            )
+        ).scalars()
+        assert set(project_ids) == {project_id}
+    inspector = inspect(engine)
+    notification_fks = inspector.get_foreign_keys("notifications")
+    assert notification_fks[0]["referred_table"] == "users"
+    assert notification_fks[0]["options"]["ondelete"] == "CASCADE"
+    engine.dispose()
+
+    command.downgrade(config, "20260723_0003")
+    engine = create_engine(sync_url)
+    inspector = inspect(engine)
+    assert "notifications" not in inspector.get_table_names()
+    assert "project_id" not in {
+        column["name"]
+        for column in inspector.get_columns("audit_logs")
     }
     engine.dispose()

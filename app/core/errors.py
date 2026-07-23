@@ -11,6 +11,7 @@ from app.auth.exceptions import (
     UserNotFoundError,
 )
 from app.services.exceptions import (
+    InvalidAnalyticsRequestError,
     PermissionDeniedError,
     ResourceConflictError,
     ResourceNotFoundError,
@@ -43,6 +44,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         PermissionDeniedError,
         _permission_denied_handler,
+    )
+    app.add_exception_handler(
+        InvalidAnalyticsRequestError,
+        _invalid_analytics_request_handler,
     )
     app.add_exception_handler(
         RequestValidationError,
@@ -125,6 +130,16 @@ async def _permission_denied_handler(
     error: Exception,
 ) -> JSONResponse:
     return _error_response(status.HTTP_403_FORBIDDEN, "Permission denied")
+
+
+async def _invalid_analytics_request_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    return _error_response(
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        str(error) or "Invalid analytics request",
+    )
 
 
 async def _validation_error_handler(

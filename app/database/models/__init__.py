@@ -7,6 +7,7 @@ from app.database.models.base import (
     UUIDPrimaryKeyMixin,
 )
 from app.database.models.enums import ProjectStatus, TaskPriority, TaskStatus
+from app.database.models.notification import Notification, NotificationType
 from app.database.models.project import Project
 from app.database.models.refresh_token import RefreshTokenSession
 from app.database.models.role import Role
@@ -19,6 +20,8 @@ __all__ = [
     "AuditAction",
     "AuditEntity",
     "AuditLog",
+    "Notification",
+    "NotificationType",
     "Project",
     "ProjectStatus",
     "RefreshTokenSession",

@@ -5,7 +5,13 @@ from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum as SQLAlchemyEnum, ForeignKey, Uuid
+from sqlalchemy import (
+    DateTime,
+    Enum as SQLAlchemyEnum,
+    ForeignKey,
+    Index,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.models.base import Base, UUIDPrimaryKeyMixin, utc_now
@@ -63,6 +69,10 @@ class AuditLog(UUIDPrimaryKeyMixin, Base):
         index=True,
         nullable=False,
     )
+    project_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+    )
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
@@ -73,4 +83,23 @@ class AuditLog(UUIDPrimaryKeyMixin, Base):
     actor: Mapped[User | None] = relationship(
         back_populates="audit_logs",
         foreign_keys=[actor_id],
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_audit_logs_actor_timestamp",
+            actor_id,
+            timestamp,
+        ),
+        Index(
+            "ix_audit_logs_entity_action_timestamp",
+            entity,
+            action,
+            timestamp,
+        ),
+        Index(
+            "ix_audit_logs_project_timestamp",
+            project_id,
+            timestamp,
+        ),
     )

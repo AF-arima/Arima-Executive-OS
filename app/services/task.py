@@ -21,6 +21,7 @@ from app.database.repositories import (
 from app.schemas.common import SortDirection
 from app.schemas.task import TaskCreate, TaskSortField, TaskUpdate
 from app.services.audit import record_audit
+from app.services.cache import dashboard_cache
 from app.services.exceptions import (
     PermissionDeniedError,
     ResourceConflictError,
@@ -32,6 +33,7 @@ from app.services.permissions import (
     can_edit_task,
     user_roles,
 )
+from app.services.notification import enqueue_task_assignment
 
 
 class TaskService:
@@ -71,6 +73,7 @@ class TaskService:
             action=AuditAction.CREATE,
             entity=AuditEntity.TASK,
             entity_id=task.id,
+            project_id=task.project_id,
         )
         if data.assigned_to is not None:
             record_audit(
@@ -79,8 +82,15 @@ class TaskService:
                 action=AuditAction.ASSIGNMENT,
                 entity=AuditEntity.TASK,
                 entity_id=task.id,
+                project_id=task.project_id,
+            )
+            enqueue_task_assignment(
+                self.session,
+                task=task,
+                user_id=data.assigned_to,
             )
         await self.session.commit()
+        await dashboard_cache.invalidate()
         return task
 
     async def list(
@@ -185,6 +195,7 @@ class TaskService:
             action=AuditAction.UPDATE,
             entity=AuditEntity.TASK,
             entity_id=task.id,
+            project_id=task.project_id,
         )
         if task.status != old_status:
             record_audit(
@@ -193,6 +204,7 @@ class TaskService:
                 action=AuditAction.STATUS_CHANGE,
                 entity=AuditEntity.TASK,
                 entity_id=task.id,
+                project_id=task.project_id,
             )
         if task.assignee_id != old_assignee:
             record_audit(
@@ -201,8 +213,16 @@ class TaskService:
                 action=AuditAction.ASSIGNMENT,
                 entity=AuditEntity.TASK,
                 entity_id=task.id,
+                project_id=task.project_id,
             )
+            if task.assignee_id is not None:
+                enqueue_task_assignment(
+                    self.session,
+                    task=task,
+                    user_id=task.assignee_id,
+                )
         await self.session.commit()
+        await dashboard_cache.invalidate()
         return task
 
     async def delete(self, task_id: UUID, actor: User) -> None:
@@ -220,8 +240,10 @@ class TaskService:
             action=AuditAction.DELETE,
             entity=AuditEntity.TASK,
             entity_id=entity_id,
+            project_id=task.project_id,
         )
         await self.session.commit()
+        await dashboard_cache.invalidate()
 
     async def _get_active_project(self, project_id: UUID) -> Project:
         project = await self.projects.get_for_update(project_id)

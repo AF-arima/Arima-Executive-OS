@@ -9,6 +9,7 @@ from app.database.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.database.models.audit_log import AuditLog
+    from app.database.models.notification import Notification
     from app.database.models.project import Project
     from app.database.models.refresh_token import RefreshTokenSession
     from app.database.models.role import Role
@@ -74,6 +75,11 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     audit_logs: Mapped[list[AuditLog]] = relationship(
         back_populates="actor",
         foreign_keys="AuditLog.actor_id",
+        passive_deletes=True,
+    )
+    notifications: Mapped[list[Notification]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
     refresh_token_sessions: Mapped[list[RefreshTokenSession]] = relationship(

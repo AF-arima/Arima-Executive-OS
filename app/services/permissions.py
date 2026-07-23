@@ -1,6 +1,23 @@
+from dataclasses import dataclass
+from enum import Enum
+from uuid import UUID
+
 from app.database.models import Project, Task, User
 
 FULL_ACCESS_ROLES = frozenset({"administrator", "executive"})
+
+
+class VisibilityKind(str, Enum):
+    GLOBAL = "global"
+    OWNED = "owned"
+    ASSIGNED = "assigned"
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyticsScope:
+    kind: VisibilityKind
+    user_id: UUID
+    roles: tuple[str, ...]
 
 
 def user_roles(user: User) -> frozenset[str]:
@@ -9,6 +26,35 @@ def user_roles(user: User) -> frozenset[str]:
 
 def has_full_access(user: User) -> bool:
     return not FULL_ACCESS_ROLES.isdisjoint(user_roles(user))
+
+
+def analytics_scope(user: User) -> AnalyticsScope:
+    roles = user_roles(user)
+    if FULL_ACCESS_ROLES.intersection(roles):
+        kind = VisibilityKind.GLOBAL
+    elif "manager" in roles:
+        kind = VisibilityKind.OWNED
+    elif "analyst" in roles:
+        kind = VisibilityKind.ASSIGNED
+    else:
+        kind = VisibilityKind.GLOBAL
+    return AnalyticsScope(
+        kind=kind,
+        user_id=user.id,
+        roles=tuple(sorted(roles)),
+    )
+
+
+def workload_scope(user: User) -> AnalyticsScope:
+    scope = analytics_scope(user)
+    elevated = FULL_ACCESS_ROLES | {"manager", "analyst"}
+    if "viewer" in scope.roles and elevated.isdisjoint(scope.roles):
+        return AnalyticsScope(
+            kind=VisibilityKind.ASSIGNED,
+            user_id=user.id,
+            roles=scope.roles,
+        )
+    return scope
 
 
 def can_create_project(user: User) -> bool:

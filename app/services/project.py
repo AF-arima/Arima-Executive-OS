@@ -23,6 +23,7 @@ from app.schemas.project import (
     ProjectUpdate,
 )
 from app.services.audit import record_audit
+from app.services.cache import dashboard_cache
 from app.services.exceptions import (
     PermissionDeniedError,
     ResourceConflictError,
@@ -33,6 +34,7 @@ from app.services.permissions import (
     can_manage_project,
     has_full_access,
 )
+from app.services.notification import enqueue_project_status_change
 
 
 class ProjectService:
@@ -71,6 +73,7 @@ class ProjectService:
                 action=AuditAction.CREATE,
                 entity=AuditEntity.PROJECT,
                 entity_id=project.id,
+                project_id=project.id,
             )
             await self.session.commit()
         except IntegrityError as error:
@@ -78,6 +81,7 @@ class ProjectService:
             raise ResourceConflictError(
                 "Project name already exists"
             ) from error
+        await dashboard_cache.invalidate()
         return project
 
     async def list(
@@ -149,6 +153,7 @@ class ProjectService:
             action=AuditAction.UPDATE,
             entity=AuditEntity.PROJECT,
             entity_id=project.id,
+            project_id=project.id,
         )
         if project.status != old_status:
             record_audit(
@@ -157,7 +162,14 @@ class ProjectService:
                 action=AuditAction.STATUS_CHANGE,
                 entity=AuditEntity.PROJECT,
                 entity_id=project.id,
+                project_id=project.id,
             )
+            if actor.id != project.owner_id:
+                enqueue_project_status_change(
+                    self.session,
+                    project=project,
+                    status=project.status,
+                )
         if project.owner_id != old_owner_id:
             record_audit(
                 self.session,
@@ -165,8 +177,10 @@ class ProjectService:
                 action=AuditAction.ASSIGNMENT,
                 entity=AuditEntity.PROJECT,
                 entity_id=project.id,
+                project_id=project.id,
             )
         await self._commit_duplicate_safe()
+        await dashboard_cache.invalidate()
         return project
 
     async def archive(self, project_id: UUID, actor: User) -> None:
@@ -180,8 +194,10 @@ class ProjectService:
             action=AuditAction.DELETE,
             entity=AuditEntity.PROJECT,
             entity_id=project.id,
+            project_id=project.id,
         )
         await self.session.commit()
+        await dashboard_cache.invalidate()
 
     async def _get_mutable(self, project_id: UUID) -> Project:
         project = await self.projects.get_for_update(project_id)

@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
     access_token_expire_minutes: int = Field(default=15, gt=0)
     refresh_token_expire_days: int = Field(default=30, gt=0)
+    dashboard_cache_ttl_seconds: int = Field(
+        default=60,
+        ge=1,
+        le=3600,
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
