@@ -9,6 +9,7 @@ from app.database.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.database.models.project import Project
+    from app.database.models.refresh_token import RefreshTokenSession
     from app.database.models.role import Role
     from app.database.models.task import Task
     from app.database.models.user_role import UserRole
@@ -57,5 +58,10 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     assigned_tasks: Mapped[list[Task]] = relationship(
         back_populates="assignee",
         foreign_keys="Task.assignee_id",
+        passive_deletes=True,
+    )
+    refresh_token_sessions: Mapped[list[RefreshTokenSession]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )

@@ -11,6 +11,10 @@ dependencies = [
     "asyncpg",
     "aiosqlite",
     "alembic",
+    "pwdlib[argon2]>=0.3",
+    "PyJWT>=2.10",
+    "email-validator>=2.2",
+    "python-multipart>=0.0.20",
 ]
 [project.optional-dependencies]
 dev = [
