@@ -50,6 +50,12 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
         nullable=False,
     )
+    created_by: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
     assignee_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -68,6 +74,10 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     project: Mapped[Project] = relationship(
         back_populates="tasks",
         foreign_keys=[project_id],
+    )
+    creator: Mapped[User] = relationship(
+        back_populates="created_tasks",
+        foreign_keys=[created_by],
     )
     assignee: Mapped[User | None] = relationship(
         back_populates="assigned_tasks",

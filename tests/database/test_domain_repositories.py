@@ -26,21 +26,32 @@ def test_domain_repository_queries() -> None:
             assignee = make_user("assignee@example.com")
             other_user = make_user("other@example.com")
             role = Role(name="administrator")
-            project = Project(name="Owned project", owner=owner)
-            other_project = Project(name="Other project", owner=other_user)
+            project = Project(
+                name="Owned project",
+                owner=owner,
+                creator=owner,
+            )
+            other_project = Project(
+                name="Other project",
+                owner=other_user,
+                creator=other_user,
+            )
             assigned_task = Task(
                 title="Assigned task",
                 project=project,
                 assignee=assignee,
+                creator=owner,
             )
             unassigned_task = Task(
                 title="Unassigned task",
                 project=project,
+                creator=owner,
             )
             other_task = Task(
                 title="Other task",
                 project=other_project,
                 assignee=other_user,
+                creator=other_user,
             )
             session.add_all(
                 [

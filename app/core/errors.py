@@ -10,6 +10,11 @@ from app.auth.exceptions import (
     RoleNotFoundError,
     UserNotFoundError,
 )
+from app.services.exceptions import (
+    PermissionDeniedError,
+    ResourceConflictError,
+    ResourceNotFoundError,
+)
 
 BEARER_HEADERS = {"WWW-Authenticate": "Bearer"}
 
@@ -27,6 +32,18 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(InvalidTokenError, _invalid_token_handler)
     app.add_exception_handler(UserNotFoundError, _user_not_found_handler)
     app.add_exception_handler(RoleNotFoundError, _role_not_found_handler)
+    app.add_exception_handler(
+        ResourceNotFoundError,
+        _resource_not_found_handler,
+    )
+    app.add_exception_handler(
+        ResourceConflictError,
+        _resource_conflict_handler,
+    )
+    app.add_exception_handler(
+        PermissionDeniedError,
+        _permission_denied_handler,
+    )
     app.add_exception_handler(
         RequestValidationError,
         _validation_error_handler,
@@ -81,6 +98,33 @@ async def _role_not_found_handler(
     error: Exception,
 ) -> JSONResponse:
     return _error_response(status.HTTP_404_NOT_FOUND, "Role not found")
+
+
+async def _resource_not_found_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    return _error_response(
+        status.HTTP_404_NOT_FOUND,
+        str(error) or "Resource not found",
+    )
+
+
+async def _resource_conflict_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    return _error_response(
+        status.HTTP_409_CONFLICT,
+        str(error) or "Resource conflict",
+    )
+
+
+async def _permission_denied_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    return _error_response(status.HTTP_403_FORBIDDEN, "Permission denied")
 
 
 async def _validation_error_handler(

@@ -37,6 +37,7 @@ def test_model_creation_and_relationships() -> None:
             project = Project(
                 name="Executive OS",
                 owner=owner,
+                creator=owner,
                 status=ProjectStatus.ACTIVE,
                 start_date=date(2026, 7, 23),
             )
@@ -44,6 +45,7 @@ def test_model_creation_and_relationships() -> None:
                 title="Build database layer",
                 project=project,
                 assignee=owner,
+                creator=owner,
                 status=TaskStatus.IN_PROGRESS,
                 priority=TaskPriority.HIGH,
                 due_date=datetime(2026, 8, 1, tzinfo=timezone.utc),

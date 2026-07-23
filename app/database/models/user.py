@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
+    from app.database.models.audit_log import AuditLog
     from app.database.models.project import Project
     from app.database.models.refresh_token import RefreshTokenSession
     from app.database.models.role import Role
@@ -55,9 +56,24 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         foreign_keys="Project.owner_id",
         passive_deletes="all",
     )
+    created_projects: Mapped[list[Project]] = relationship(
+        back_populates="creator",
+        foreign_keys="Project.created_by",
+        passive_deletes="all",
+    )
     assigned_tasks: Mapped[list[Task]] = relationship(
         back_populates="assignee",
         foreign_keys="Task.assignee_id",
+        passive_deletes=True,
+    )
+    created_tasks: Mapped[list[Task]] = relationship(
+        back_populates="creator",
+        foreign_keys="Task.created_by",
+        passive_deletes="all",
+    )
+    audit_logs: Mapped[list[AuditLog]] = relationship(
+        back_populates="actor",
+        foreign_keys="AuditLog.actor_id",
         passive_deletes=True,
     )
     refresh_token_sessions: Mapped[list[RefreshTokenSession]] = relationship(

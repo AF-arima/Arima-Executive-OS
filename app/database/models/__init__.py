@@ -1,5 +1,6 @@
 """Database models."""
 
+from app.database.models.audit_log import AuditAction, AuditEntity, AuditLog
 from app.database.models.base import (
     Base,
     TimestampMixin,
@@ -15,6 +16,9 @@ from app.database.models.user_role import UserRole
 
 __all__ = [
     "Base",
+    "AuditAction",
+    "AuditEntity",
+    "AuditLog",
     "Project",
     "ProjectStatus",
     "RefreshTokenSession",

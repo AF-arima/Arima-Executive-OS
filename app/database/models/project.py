@@ -1,10 +1,21 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Date, Enum, ForeignKey, String, Text, Uuid
+from sqlalchemy import (
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    Uuid,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -38,15 +49,40 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
         nullable=False,
     )
+    created_by: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     target_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     owner: Mapped[User] = relationship(
         back_populates="owned_projects",
         foreign_keys=[owner_id],
     )
+    creator: Mapped[User] = relationship(
+        back_populates="created_projects",
+        foreign_keys=[created_by],
+    )
     tasks: Mapped[list[Task]] = relationship(
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_projects_owner_name_active",
+            owner_id,
+            func.lower(name),
+            unique=True,
+            postgresql_where=text("archived_at IS NULL"),
+            sqlite_where=text("archived_at IS NULL"),
+        ),
     )
