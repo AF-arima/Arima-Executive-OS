@@ -7,6 +7,10 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "pydantic-settings",
+    "SQLAlchemy[asyncio]>=2.0",
+    "asyncpg",
+    "aiosqlite",
+    "alembic",
 ]
 [project.optional-dependencies]
 dev = [
