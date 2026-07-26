@@ -31,6 +31,13 @@ from app.database.models.base import (
     TimestampMixin,
     UUIDPrimaryKeyMixin,
 )
+from app.database.models.background import (
+    BackgroundJobAttempt,
+    BackgroundJobDefinition,
+    BackgroundJobEvent,
+    BackgroundJobExecution,
+    BackgroundJobSchedule,
+)
 from app.database.models.crm import (
     CRMActivity,
     CRMActivityType,
@@ -109,6 +116,11 @@ __all__ = [
     "AuditAction",
     "AuditEntity",
     "AuditLog",
+    "BackgroundJobAttempt",
+    "BackgroundJobDefinition",
+    "BackgroundJobEvent",
+    "BackgroundJobExecution",
+    "BackgroundJobSchedule",
     "ApprovalStatus",
     "AutomationAction",
     "AutomationRule",
