@@ -39,6 +39,13 @@ AgentModel = TypeVar("AgentModel", bound=Base)
 
 
 class AgentRepositoryBase(AsyncRepository[AgentModel], Generic[AgentModel]):
+    async def get_for_update(self, identity: object) -> AgentModel | None:
+        return await self.session.scalar(
+            select(self.model)
+            .where(self.model.__table__.c.id == identity)
+            .with_for_update()
+        )
+
     async def create(self, values: Mapping[str, Any]) -> AgentModel:
         instance = self.model(**self._model_values(values))
         return await self.add(instance)
@@ -248,6 +255,28 @@ class AgentMessageRepository(AgentRepositoryBase[AgentMessage]):
             )
         )
         return int(current or 0) + 1
+
+    async def create_sequenced(
+        self,
+        conversation: AgentConversation,
+        values: Mapping[str, Any],
+        *,
+        created_at: datetime,
+    ) -> AgentMessage:
+        sequence_number = await self.next_sequence(conversation.id)
+        message = await self.create(
+            {
+                **values,
+                "conversation_id": conversation.id,
+                "sequence_number": sequence_number,
+                "created_at": created_at,
+            }
+        )
+        await AgentConversationRepository(self.session).update(
+            conversation,
+            {"last_message_at": created_at},
+        )
+        return message
 
     async def list_for_conversation(
         self,

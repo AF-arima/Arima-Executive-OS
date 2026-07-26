@@ -84,6 +84,27 @@ def enqueue_crm_notification(
     )
 
 
+def enqueue_agent_notification(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    entity_type: str,
+    entity_id: UUID,
+    title: str,
+    message: str,
+) -> None:
+    session.add(
+        Notification(
+            user_id=user_id,
+            type=NotificationType.SYSTEM,
+            title=title,
+            message=message,
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+    )
+
+
 class NotificationService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session

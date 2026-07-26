@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import Enum
 from uuid import UUID
 
-from app.database.models import Project, Task, User
+from app.database.models import AgentConversation, AgentMemory, Project, Task, User
 
 FULL_ACCESS_ROLES = frozenset({"administrator", "executive"})
 
@@ -148,3 +148,38 @@ def can_edit_task(user: User, task: Task, project: Project) -> bool:
 
 def can_delete_task(user: User, project: Project) -> bool:
     return can_manage_project(user, project)
+
+
+def can_manage_agents(user: User) -> bool:
+    return has_full_access(user)
+
+
+def can_invoke_agents(user: User) -> bool:
+    return bool(
+        user_roles(user).intersection(
+            {"administrator", "executive", "manager", "analyst"}
+        )
+    )
+
+
+def can_approve_agent_actions(user: User) -> bool:
+    return bool(
+        user_roles(user).intersection(
+            {"administrator", "executive", "manager"}
+        )
+    )
+
+
+def can_view_conversation(
+    user: User,
+    conversation: AgentConversation,
+) -> bool:
+    return has_full_access(user) or conversation.owner_id == user.id
+
+
+def can_manage_memory(user: User, memory: AgentMemory | None = None) -> bool:
+    if has_full_access(user):
+        return True
+    if memory is None:
+        return can_invoke_agents(user)
+    return memory.owner_id == user.id

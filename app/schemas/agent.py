@@ -191,7 +191,7 @@ class AgentConversationRead(AgentReadSchema):
     priority: ConversationPriority
     pinned: bool
     metadata: dict[str, JsonValue] = Field(
-        validation_alias=AliasChoices("metadata", "metadata_")
+        validation_alias=AliasChoices("metadata_", "metadata")
     )
     last_message_at: datetime | None
     created_at: datetime
@@ -243,7 +243,7 @@ class AgentMessageRead(AgentReadSchema):
     sequence_number: int
     token_count: int | None
     metadata: dict[str, JsonValue] = Field(
-        validation_alias=AliasChoices("metadata", "metadata_")
+        validation_alias=AliasChoices("metadata_", "metadata")
     )
     created_by_id: UUID | None
     created_at: datetime
@@ -325,7 +325,7 @@ class AgentRunRead(AgentReadSchema):
     latency_ms: int | None
     context_snapshot: dict[str, JsonValue]
     metadata: dict[str, JsonValue] = Field(
-        validation_alias=AliasChoices("metadata", "metadata_")
+        validation_alias=AliasChoices("metadata_", "metadata")
     )
     created_at: datetime
     updated_at: datetime
@@ -658,7 +658,7 @@ class AgentAttachmentRead(AgentReadSchema):
     checksum_sha256: str | None
     status: AgentAttachmentStatus
     metadata: dict[str, JsonValue] = Field(
-        validation_alias=AliasChoices("metadata", "metadata_")
+        validation_alias=AliasChoices("metadata_", "metadata")
     )
     created_at: datetime
     updated_at: datetime
@@ -673,3 +673,111 @@ class AgentAttachmentFilter(AgentFilter):
 
 class AgentAttachmentList(AgentList[AgentAttachmentRead]):
     pass
+
+
+# Application-layer request schemas deliberately omit server-owned fields.
+class AgentCreateRequest(StrictSchema):
+    slug: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    system_instructions: str = Field(min_length=1, max_length=100000)
+
+    _slug = field_validator("slug")(normalize_slug)
+
+
+class AgentPatchRequest(StrictSchema):
+    slug: str | None = Field(default=None, min_length=1, max_length=120)
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    system_instructions: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100000,
+    )
+    version: int | None = Field(default=None, ge=1)
+
+    _slug = field_validator("slug")(normalize_slug)
+
+
+class ConversationCreateRequest(StrictSchema):
+    agent_id: UUID
+    title: str = Field(min_length=1, max_length=300)
+    priority: ConversationPriority = ConversationPriority.NORMAL
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+    owner_id: UUID | None = None
+
+
+class ConversationRenameRequest(StrictSchema):
+    title: str = Field(min_length=1, max_length=300)
+
+
+class MessageCreateRequest(StrictSchema):
+    conversation_id: UUID
+    role: MessageRole
+    content: str = Field(min_length=1, max_length=500000)
+    content_type: MessageContentType = MessageContentType.TEXT
+    run_id: UUID | None = None
+    parent_message_id: UUID | None = None
+    token_count: int | None = Field(default=None, ge=0)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class RunCreateRequest(StrictSchema):
+    conversation_id: UUID
+    input_message_id: UUID | None = None
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_gbp: Decimal | None = Field(default=None, ge=0)
+    context_snapshot: dict[str, JsonValue] = Field(default_factory=dict)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class RunTransitionRequest(StrictSchema):
+    status: AgentRunStatus
+    output_message_id: UUID | None = None
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_gbp: Decimal | None = Field(default=None, ge=0)
+    failure_code: str | None = Field(default=None, max_length=100)
+    failure_message: str | None = Field(default=None, max_length=2000)
+
+
+class ApprovalCreateRequest(StrictSchema):
+    run_id: UUID
+    tool_execution_id: UUID | None = None
+    action_type: str = Field(min_length=1, max_length=150)
+    risk_level: AgentRiskLevel
+    reason: str = Field(min_length=1, max_length=2000)
+    request_payload: dict[str, JsonValue] = Field(default_factory=dict)
+    expires_at: datetime | None = None
+
+    _expires = field_validator("expires_at")(require_aware)
+
+
+class ApprovalDecisionRequest(StrictSchema):
+    status: AgentApprovalStatus
+    decision_note: str | None = Field(default=None, max_length=2000)
+
+
+class MemoryCreateRequest(StrictSchema):
+    owner_id: UUID | None = None
+    agent_id: UUID | None = None
+    conversation_id: UUID | None = None
+    memory_type: AgentMemoryType
+    scope: AgentMemoryScope
+    key: str = Field(min_length=1, max_length=200)
+    value: str = Field(min_length=1, max_length=100000)
+    importance: int = Field(default=3, ge=1, le=5)
+    source_message_id: UUID | None = None
+    expires_at: datetime | None = None
+
+    _key = field_validator("key")(normalize_memory_key)
+    _expires = field_validator("expires_at")(require_aware)
+
+
+class MemoryPatchRequest(StrictSchema):
+    value: str | None = Field(default=None, min_length=1, max_length=100000)
+    importance: int | None = Field(default=None, ge=1, le=5)
+    expires_at: datetime | None = None
+
+    _expires = field_validator("expires_at")(require_aware)
