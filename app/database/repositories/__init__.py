@@ -9,6 +9,18 @@ from app.database.repositories.analytics import (
     TaskAnalyticsRaw,
     WorkloadRow,
 )
+from app.database.repositories.agent import (
+    AgentApprovalRepository,
+    AgentAttachmentRepository,
+    AgentContextSnapshotRepository,
+    AgentConversationRepository,
+    AgentDefinitionRepository,
+    AgentMemoryRepository,
+    AgentMessageRepository,
+    AgentRunRepository,
+    AgentToolDefinitionRepository,
+    AgentToolExecutionRepository,
+)
 from app.database.repositories.audit_log import AuditLogRepository
 from app.database.repositories.base import AsyncRepository
 from app.database.repositories.crm import (
@@ -30,6 +42,16 @@ from app.database.repositories.task import TaskFilters, TaskRepository
 from app.database.repositories.user import UserRepository
 
 __all__ = [
+    "AgentApprovalRepository",
+    "AgentAttachmentRepository",
+    "AgentContextSnapshotRepository",
+    "AgentConversationRepository",
+    "AgentDefinitionRepository",
+    "AgentMemoryRepository",
+    "AgentMessageRepository",
+    "AgentRunRepository",
+    "AgentToolDefinitionRepository",
+    "AgentToolExecutionRepository",
     "CRMActivityFilters",
     "CRMRepository",
     "CompanyFilters",
