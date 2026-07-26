@@ -73,7 +73,9 @@ TERMINAL_RUN_STATUSES = frozenset(
     }
 )
 RUN_TRANSITIONS = {
-    AgentRunStatus.QUEUED: frozenset({AgentRunStatus.RUNNING}),
+    AgentRunStatus.QUEUED: frozenset(
+        {AgentRunStatus.RUNNING, AgentRunStatus.CANCELLED}
+    ),
     AgentRunStatus.RUNNING: frozenset(
         {
             AgentRunStatus.WAITING_FOR_APPROVAL,
@@ -83,7 +85,7 @@ RUN_TRANSITIONS = {
         }
     ),
     AgentRunStatus.WAITING_FOR_APPROVAL: frozenset(
-        {AgentRunStatus.RUNNING}
+        {AgentRunStatus.RUNNING, AgentRunStatus.CANCELLED}
     ),
     AgentRunStatus.COMPLETED: frozenset(),
     AgentRunStatus.FAILED: frozenset(),
