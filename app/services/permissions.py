@@ -74,10 +74,7 @@ def crm_scope(user: User) -> AnalyticsScope:
 
 def can_create_crm(user: User) -> bool:
     roles = user_roles(user)
-    return bool(
-        FULL_ACCESS_ROLES.intersection(roles)
-        or "manager" in roles
-    )
+    return bool(FULL_ACCESS_ROLES.intersection(roles) or "manager" in roles)
 
 
 def can_contribute_crm(user: User) -> bool:
@@ -102,6 +99,32 @@ def can_manage_pipelines(user: User) -> bool:
     return has_full_access(user)
 
 
+def outreach_scope(user: User) -> AnalyticsScope:
+    roles = user_roles(user)
+    return AnalyticsScope(
+        kind=(
+            VisibilityKind.GLOBAL
+            if FULL_ACCESS_ROLES.intersection(roles)
+            else VisibilityKind.OWNED
+        ),
+        user_id=user.id,
+        roles=tuple(sorted(roles)),
+    )
+
+
+def can_manage_outreach(user: User) -> bool:
+    roles = user_roles(user)
+    return bool(
+        FULL_ACCESS_ROLES.intersection(roles)
+        or roles.intersection({"manager", "analyst"})
+    )
+
+
+def can_approve_outreach(user: User) -> bool:
+    roles = user_roles(user)
+    return bool(FULL_ACCESS_ROLES.intersection(roles) or "manager" in roles)
+
+
 def can_create_project(user: User) -> bool:
     roles = user_roles(user)
     return bool(FULL_ACCESS_ROLES.intersection(roles) or "manager" in roles)
@@ -120,10 +143,7 @@ def can_create_task(user: User, project: Project) -> bool:
 def can_edit_task(user: User, task: Task, project: Project) -> bool:
     if can_manage_project(user, project):
         return True
-    return (
-        "analyst" in user_roles(user)
-        and task.assignee_id == user.id
-    )
+    return "analyst" in user_roles(user) and task.assignee_id == user.id
 
 
 def can_delete_task(user: User, project: Project) -> bool:

@@ -300,8 +300,8 @@ class PipelineStage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     deals: Mapped[list[Deal]] = relationship(back_populates="stage")
 
     __table_args__ = (
-        UniqueConstraint("pipeline_id", "position"),
-        UniqueConstraint("pipeline_id", "name"),
+        UniqueConstraint("pipeline_id", "position", name="uq_crm_pipeline_stages_pipeline_position"),
+        UniqueConstraint("pipeline_id", "name", name="uq_crm_pipeline_stages_pipeline_name"),
         CheckConstraint(
             "probability >= 0 AND probability <= 100",
             name="probability_range",

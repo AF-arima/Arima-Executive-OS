@@ -42,6 +42,12 @@ class AuditEntity(str, Enum):
     DEAL = "deal"
     CRM_NOTE = "crm_note"
     CRM_ACTIVITY = "crm_activity"
+    MAILBOX = "mailbox"
+    EMAIL_TEMPLATE = "email_template"
+    EMAIL_DRAFT = "email_draft"
+    SEQUENCE = "sequence"
+    CAMPAIGN = "campaign"
+    AUTOMATION = "automation"
 
 
 class AuditLog(UUIDPrimaryKeyMixin, Base):

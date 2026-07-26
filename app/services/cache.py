@@ -109,9 +109,7 @@ class InMemoryModelCache:
                 return None
             return entry.value.model_copy(deep=True)
 
-    async def set(
-        self, key: str, value: BaseModel, *, ttl_seconds: int = 60
-    ) -> None:
+    async def set(self, key: str, value: BaseModel, *, ttl_seconds: int = 60) -> None:
         async with self._lock:
             self._entries[key] = _ModelCacheEntry(
                 value=value.model_copy(deep=True),
@@ -126,3 +124,4 @@ class InMemoryModelCache:
 
 
 crm_analytics_cache = InMemoryModelCache()
+outreach_analytics_cache = InMemoryModelCache()

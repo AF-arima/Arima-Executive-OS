@@ -8,6 +8,7 @@ from app.api.v1.routes import (
     crm,
     dashboard,
     notifications,
+    outreach,
     projects,
     tasks,
 )
@@ -22,3 +23,4 @@ api_router.include_router(analytics.router)
 api_router.include_router(activity.router)
 api_router.include_router(notifications.router)
 api_router.include_router(crm.router)
+api_router.include_router(outreach.router)

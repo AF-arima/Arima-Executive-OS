@@ -288,8 +288,8 @@ crm_pipeline_stages = sa.Table(
     sa.Column("is_won", sa.Boolean(), nullable=False),
     *_identity_columns(),
     sa.PrimaryKeyConstraint("id"),
-    sa.UniqueConstraint("pipeline_id", "position"),
-    sa.UniqueConstraint("pipeline_id", "name"),
+    sa.UniqueConstraint("pipeline_id", "position", name="uq_crm_pipeline_stages_pipeline_position"),
+    sa.UniqueConstraint("pipeline_id", "name", name="uq_crm_pipeline_stages_pipeline_name"),
     sa.CheckConstraint(
         "probability >= 0 AND probability <= 100",
         name="probability_range",

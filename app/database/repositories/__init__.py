@@ -21,6 +21,7 @@ from app.database.repositories.crm import (
     NoteFilters,
 )
 from app.database.repositories.notification import NotificationRepository
+from app.database.repositories.outreach import OutreachRepository
 from app.database.repositories.pagination import Page
 from app.database.repositories.project import ProjectFilters, ProjectRepository
 from app.database.repositories.refresh_token import RefreshTokenRepository
@@ -43,6 +44,7 @@ __all__ = [
     "AsyncRepository",
     "DashboardRaw",
     "NotificationRepository",
+    "OutreachRepository",
     "Page",
     "ProjectRepository",
     "ProjectAnalyticsRow",

@@ -6,4 +6,4 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .env
-*.egg-info/
+*.egg-info/.DS_Store

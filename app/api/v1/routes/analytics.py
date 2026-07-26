@@ -24,8 +24,10 @@ from app.schemas.crm import (
     CRMLeadAnalytics,
     CRMPipelineAnalytics,
 )
+from app.schemas.outreach import OutreachAnalytics
 from app.services.analytics import AnalyticsService
 from app.services.crm_analytics import CRMAnalyticsService
+from app.services.outreach_analytics import OutreachAnalyticsService
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -55,9 +57,7 @@ async def project_analytics(
     owner_id: UUID | None = None,
     include_archived: bool = False,
     search: Annotated[str | None, Query(max_length=200)] = None,
-    sort_by: ProjectAnalyticsSortField = (
-        ProjectAnalyticsSortField.CREATED_AT
-    ),
+    sort_by: ProjectAnalyticsSortField = (ProjectAnalyticsSortField.CREATED_AT),
     direction: SortDirection = SortDirection.DESC,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -209,4 +209,24 @@ async def crm_activity_analytics(
         start_date=start_date,
         end_date=end_date,
         refresh=refresh,
+    )
+
+
+@router.get(
+    "/outreach",
+    response_model=OutreachAnalytics,
+    summary="Get permission-scoped outreach delivery analytics",
+    description=(
+        "Returns status and delivery metrics scoped to the caller. "
+        "Rates use a zero-to-one scale; refresh bypasses the 60-second cache."
+    ),
+    responses=AUTHENTICATED_RESPONSES,
+)
+async def outreach_analytics(
+    session: SessionDependency,
+    current_user: AnalyticsUser,
+    refresh: bool = False,
+) -> OutreachAnalytics:
+    return await OutreachAnalyticsService(session).summary(
+        current_user, refresh=refresh
     )

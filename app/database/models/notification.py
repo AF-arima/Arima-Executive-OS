@@ -35,6 +35,10 @@ class NotificationType(str, Enum):
     LEAD_CONVERTED = "lead_converted"
     FOLLOW_UP_DUE = "follow_up_due"
     CRM_ACTIVITY_ASSIGNED = "crm_activity_assigned"
+    OUTREACH_APPROVAL_REQUESTED = "outreach_approval_requested"
+    OUTREACH_APPROVAL_DECIDED = "outreach_approval_decided"
+    OUTREACH_SEND_FAILED = "outreach_send_failed"
+    CAMPAIGN_COMPLETED = "campaign_completed"
 
 
 class Notification(UUIDPrimaryKeyMixin, Base):
