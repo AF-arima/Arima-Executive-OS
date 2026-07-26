@@ -1,14 +1,11 @@
 from uuid import UUID
 
+from app.providers.exceptions import ProviderUnavailable as ProviderUnavailable
 from app.services.exceptions import ServiceError
 
 
 class ExecutionError(ServiceError):
     """Base class for expected execution-platform failures."""
-
-
-class ProviderUnavailable(ExecutionError):
-    pass
 
 
 class ProviderFailure(ExecutionError):

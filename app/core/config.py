@@ -25,6 +25,25 @@ class Settings(BaseSettings):
         ge=1,
         le=3600,
     )
+    openai_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    nvidia_api_key: SecretStr | None = None
+    ollama_url: str = "http://localhost:11434"
+    default_provider: Literal[
+        "mock",
+        "openai",
+        "anthropic",
+        "nvidia",
+        "ollama",
+    ] = "mock"
+    default_model: str = Field(
+        default="mock-model",
+        min_length=1,
+        max_length=200,
+    )
+    max_model_tokens: int = Field(default=128_000, ge=1)
+    default_temperature: float = Field(default=0.2, ge=0, le=2)
+    max_output_tokens: int = Field(default=4_096, ge=1)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -43,6 +62,10 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "JWT_SECRET_KEY must be configured in production"
+            )
+        if self.max_output_tokens > self.max_model_tokens:
+            raise ValueError(
+                "MAX_OUTPUT_TOKENS cannot exceed MAX_MODEL_TOKENS"
             )
         return self
 
