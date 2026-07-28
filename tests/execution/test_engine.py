@@ -63,6 +63,7 @@ def prepare_execution(
     context: AuthTestContext,
     *,
     suffix: str,
+    owner_role: str = "analyst",
 ) -> tuple[
     dict[str, object],
     dict[str, str],
@@ -73,7 +74,7 @@ def prepare_execution(
     owner, owner_headers = prepare_user(
         context,
         f"execution-owner-{suffix}@example.com",
-        "analyst",
+        owner_role,
     )
     admin, admin_headers = prepare_user(
         context,
@@ -219,9 +220,10 @@ def test_execution_lifecycle_context_prompt_tool_metrics_audit_notification(
 def test_approval_pause_resume_and_approval_cancellation(
     management_context: AuthTestContext,
 ) -> None:
-    owner, _, admin_headers, run_id, _ = prepare_execution(
+    owner, owner_headers, admin_headers, run_id, _ = prepare_execution(
         management_context,
         suffix="approval",
+        owner_role="manager",
     )
 
     async def pause() -> ApprovalRequired:
@@ -249,9 +251,17 @@ def test_approval_pause_resume_and_approval_cancellation(
             return caught.value
 
     required = asyncio.run(pause())
+    assert (
+        management_context.client.patch(
+            f"/api/v1/approvals/{required.approval_id}",
+            headers=admin_headers,
+            json={"status": "approved"},
+        ).status_code
+        == 404
+    )
     approved = management_context.client.patch(
         f"/api/v1/approvals/{required.approval_id}",
-        headers=admin_headers,
+        headers=owner_headers,
         json={"status": "approved"},
     )
     assert approved.status_code == 200, approved.text

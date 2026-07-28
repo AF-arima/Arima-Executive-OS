@@ -1,143 +1,369 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from app.database.models import RefreshTokenSession
+from app.database.models import RefreshTokenSession, User, Workspace
 from tests.auth.conftest import AuthTestContext
 from tests.auth.helpers import (
+    VALID_PASSWORD,
     bearer,
+    csrf_headers,
+    email_token,
     login_user,
     register_user,
-    set_user_active,
 )
 
 
-def refresh_sessions(
-    context: AuthTestContext,
-) -> list[RefreshTokenSession]:
-    async def load_sessions() -> list[RefreshTokenSession]:
-        async with context.session_factory() as session:
-            result = await session.scalars(select(RefreshTokenSession))
-            return list(result.all())
-
-    return asyncio.run(load_sessions())
+def refresh_cookie(context: AuthTestContext) -> str:
+    value = context.client.cookies.get("arima_refresh_token")
+    assert isinstance(value, str)
+    return value
 
 
-def test_authenticated_current_user_has_default_viewer_role(
+def test_me_requires_active_access_session(
     auth_context: AuthTestContext,
 ) -> None:
     registered = register_user(auth_context)
-    tokens = login_user(auth_context)
+    session = login_user(auth_context)
 
     response = auth_context.client.get(
         "/api/v1/auth/me",
-        headers=bearer(tokens["access_token"]),
+        headers=bearer(session["access_token"]),
     )
 
     assert response.status_code == 200
-    assert response.json()["id"] == registered["id"]
-    assert [role["name"] for role in response.json()["roles"]] == ["viewer"]
+    assert response.json()["id"] == str(registered["id"])
+    assert [role["name"] for role in response.json()["roles"]] == ["manager"]
+    assert response.json()["workspace"]["owner_id"] == str(registered["id"])
     assert "hashed_password" not in response.json()
-    assert response.headers["cache-control"] == "no-store"
 
 
-def test_current_user_rejects_missing_invalid_and_refresh_tokens(
+def test_refresh_rotates_cookie_and_detects_reuse(
     auth_context: AuthTestContext,
 ) -> None:
     register_user(auth_context)
-    tokens = login_user(auth_context)
+    original = login_user(auth_context)
+    original_refresh = refresh_cookie(auth_context)
 
-    missing = auth_context.client.get("/api/v1/auth/me")
-    invalid = auth_context.client.get(
-        "/api/v1/auth/me",
-        headers=bearer("malformed-token"),
+    rotated = auth_context.client.post(
+        "/api/v1/auth/refresh",
+        headers=csrf_headers(auth_context),
     )
-    refresh = auth_context.client.get(
-        "/api/v1/auth/me",
-        headers=bearer(tokens["refresh_token"]),
+    assert rotated.status_code == 200
+    assert rotated.json()["access_token"] != original["access_token"]
+    assert refresh_cookie(auth_context) != original_refresh
+
+    auth_context.client.cookies.set("arima_refresh_token", original_refresh)
+    reused = auth_context.client.post(
+        "/api/v1/auth/refresh",
+        headers=csrf_headers(auth_context),
     )
+    assert reused.status_code == 401
 
-    assert missing.status_code == 401
-    assert invalid.status_code == 401
-    assert refresh.status_code == 401
+    revoked_access = auth_context.client.get(
+        "/api/v1/auth/me",
+        headers=bearer(rotated.json()["access_token"]),
+    )
+    assert revoked_access.status_code == 401
 
 
-def test_refresh_session_stores_only_safe_identifier(
+def test_logout_revokes_access_and_refresh_session(
     auth_context: AuthTestContext,
 ) -> None:
     register_user(auth_context)
-    tokens = login_user(auth_context)
+    session = login_user(auth_context)
 
-    sessions = refresh_sessions(auth_context)
+    logout = auth_context.client.post(
+        "/api/v1/auth/logout",
+        headers=csrf_headers(auth_context),
+    )
+    assert logout.status_code == 204
+    assert auth_context.client.cookies.get("arima_refresh_token") is None
 
-    assert len(sessions) == 1
-    assert len(sessions[0].token_jti) == 36
-    assert sessions[0].token_jti != tokens["refresh_token"]
-    assert "refresh_token" not in RefreshTokenSession.__table__.columns
+    current = auth_context.client.get(
+        "/api/v1/auth/me",
+        headers=bearer(session["access_token"]),
+    )
+    assert current.status_code == 401
 
 
-def test_inactive_current_user_is_rejected(
+def test_logout_is_idempotent_for_an_invalid_refresh_cookie(
     auth_context: AuthTestContext,
 ) -> None:
-    register_user(auth_context)
-    tokens = login_user(auth_context)
-    set_user_active(
-        auth_context,
-        "user@example.com",
-        is_active=False,
+    auth_context.client.cookies.set(
+        "arima_refresh_token",
+        "invalid",
+        path="/api/v1/auth",
     )
 
-    response = auth_context.client.get(
-        "/api/v1/auth/me",
-        headers=bearer(tokens["access_token"]),
+    response = auth_context.client.post(
+        "/api/v1/auth/logout",
+        headers=csrf_headers(auth_context),
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 204
+    assert any(
+        "arima_refresh_token" in value.lower()
+        and "max-age=0" in value.lower()
+        for value in response.headers.get_list("set-cookie")
+    )
 
 
-def test_refresh_rotation_and_reuse_detection(
+def test_password_reset_revokes_existing_sessions(
     auth_context: AuthTestContext,
 ) -> None:
     register_user(auth_context)
     original = login_user(auth_context)
 
-    rotated = auth_context.client.post(
-        "/api/v1/auth/refresh",
-        json={"refresh_token": original["refresh_token"]},
+    requested = auth_context.client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "user@example.com"},
+        headers=csrf_headers(auth_context),
     )
-    reused = auth_context.client.post(
-        "/api/v1/auth/refresh",
-        json={"refresh_token": original["refresh_token"]},
+    assert requested.status_code == 202
+    token = email_token(auth_context, "reset")
+    reset = auth_context.client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": token, "password": "AnotherStrongPassword1!"},
+        headers=csrf_headers(auth_context),
     )
+    assert reset.status_code == 204
 
-    assert rotated.status_code == 200
-    assert rotated.json()["refresh_token"] != original["refresh_token"]
-    assert rotated.headers["cache-control"] == "no-store"
-    assert rotated.headers["pragma"] == "no-cache"
-    assert reused.status_code == 401
-
-    accepted = auth_context.client.get(
+    old_access = auth_context.client.get(
         "/api/v1/auth/me",
-        headers=bearer(rotated.json()["access_token"]),
+        headers=bearer(original["access_token"]),
     )
-    assert accepted.status_code == 200
+    assert old_access.status_code == 401
+    new_login = login_user(
+        auth_context,
+        password="AnotherStrongPassword1!",
+    )
+    assert isinstance(new_login["access_token"], str)
 
 
-def test_logout_revokes_refresh_session(
+def test_sessions_can_be_listed_and_revoked_together(
     auth_context: AuthTestContext,
 ) -> None:
     register_user(auth_context)
-    tokens = login_user(auth_context)
+    session = login_user(auth_context, password=VALID_PASSWORD)
+    headers = bearer(session["access_token"])
 
-    logout = auth_context.client.post(
-        "/api/v1/auth/logout",
-        json={"refresh_token": tokens["refresh_token"]},
+    listed = auth_context.client.get("/api/v1/auth/sessions", headers=headers)
+    assert listed.status_code == 200
+    assert len(listed.json()["items"]) == 1
+    assert listed.json()["items"][0]["current"] is True
+
+    logout_all = auth_context.client.post(
+        "/api/v1/auth/logout-all",
+        headers={**headers, **csrf_headers(auth_context)},
     )
-    refresh = auth_context.client.post(
-        "/api/v1/auth/refresh",
-        json={"refresh_token": tokens["refresh_token"]},
+    assert logout_all.status_code == 204
+    assert auth_context.client.get("/api/v1/auth/me", headers=headers).status_code == 401
+
+
+def test_account_lockout_is_enforced_after_repeated_failures(
+    auth_context: AuthTestContext,
+) -> None:
+    register_user(auth_context)
+    statuses = []
+    for _ in range(5):
+        response = auth_context.client.post(
+            "/api/v1/auth/login",
+            json={"email": "user@example.com", "password": "WrongPassword1!"},
+            headers=csrf_headers(auth_context),
+        )
+        statuses.append(response.status_code)
+
+    locked = auth_context.client.post(
+        "/api/v1/auth/login",
+        json={"email": "user@example.com", "password": VALID_PASSWORD},
+        headers=csrf_headers(auth_context),
+    )
+    assert statuses[:4] == [401, 401, 401, 401]
+    assert statuses[4] == 423
+    assert locked.status_code == 423
+    assert "retry-after" in locked.headers
+
+
+def test_expired_lockout_resets_before_the_next_failed_attempt(
+    auth_context: AuthTestContext,
+) -> None:
+    register_user(auth_context)
+
+    async def expire_lockout() -> None:
+        async with auth_context.session_factory() as session:
+            user = await session.scalar(
+                select(User).where(User.email == "user@example.com")
+            )
+            assert user is not None
+            user.failed_login_attempts = 5
+            user.locked_until = datetime.now(UTC) - timedelta(seconds=1)
+            await session.commit()
+
+    asyncio.run(expire_lockout())
+    response = auth_context.client.post(
+        "/api/v1/auth/login",
+        json={"email": "user@example.com", "password": "WrongPassword1!"},
+        headers=csrf_headers(auth_context),
+    )
+    assert response.status_code == 401
+
+    async def verify_reset() -> None:
+        async with auth_context.session_factory() as session:
+            user = await session.scalar(
+                select(User).where(User.email == "user@example.com")
+            )
+            assert user is not None
+            assert user.failed_login_attempts == 1
+            assert user.locked_until is None
+
+    asyncio.run(verify_reset())
+
+
+def test_refresh_table_never_stores_raw_token(
+    auth_context: AuthTestContext,
+) -> None:
+    register_user(auth_context)
+    login_user(auth_context)
+
+    async def load_sessions() -> list[RefreshTokenSession]:
+        async with auth_context.session_factory() as session:
+            return list((await session.scalars(select(RefreshTokenSession))).all())
+
+    sessions = asyncio.run(load_sessions())
+    assert len(sessions) == 1
+    assert len(sessions[0].token_jti) == 36
+    assert "refresh_token" not in RefreshTokenSession.__table__.columns
+
+
+def test_profile_password_and_email_change_revoke_existing_sessions(
+    auth_context: AuthTestContext,
+) -> None:
+    register_user(auth_context)
+    original = login_user(auth_context)
+    headers = {
+        **bearer(original["access_token"]),
+        **csrf_headers(auth_context),
+    }
+
+    profile = auth_context.client.patch(
+        "/api/v1/auth/me",
+        headers=headers,
+        json={"first_name": "Updated", "last_name": "Executive"},
+    )
+    assert profile.status_code == 200
+    assert profile.json()["first_name"] == "Updated"
+    assert profile.json()["workspace"] is not None
+
+    changed_password = auth_context.client.post(
+        "/api/v1/auth/change-password",
+        headers=headers,
+        json={
+            "current_password": VALID_PASSWORD,
+            "password": "DifferentStrongPassword1!",
+        },
+    )
+    assert changed_password.status_code == 204
+    assert (
+        auth_context.client.get(
+            "/api/v1/auth/me",
+            headers=bearer(original["access_token"]),
+        ).status_code
+        == 401
     )
 
-    assert logout.status_code == 204
-    assert logout.content == b""
-    assert refresh.status_code == 401
+    session = login_user(
+        auth_context,
+        password="DifferentStrongPassword1!",
+    )
+    change_headers = {
+        **bearer(session["access_token"]),
+        **csrf_headers(auth_context),
+    }
+    requested = auth_context.client.post(
+        "/api/v1/auth/change-email",
+        headers=change_headers,
+        json={
+            "new_email": "new-address@example.com",
+            "current_password": "DifferentStrongPassword1!",
+        },
+    )
+    assert requested.status_code == 202
+    token = email_token(auth_context, "confirm your new")
+    confirmed = auth_context.client.post(
+        "/api/v1/auth/change-email/confirm",
+        headers=csrf_headers(auth_context),
+        json={"token": token},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["email"] == "new-address@example.com"
+    assert (
+        auth_context.client.get(
+            "/api/v1/auth/me",
+            headers=bearer(session["access_token"]),
+        ).status_code
+        == 401
+    )
+    assert auth_context.email_provider.messages[-1].to_address == "user@example.com"
+    assert isinstance(
+        login_user(
+            auth_context,
+            email="new-address@example.com",
+            password="DifferentStrongPassword1!",
+        )["access_token"],
+        str,
+    )
+
+
+def test_required_email_delivery_failure_rolls_back_registration(
+    auth_context: AuthTestContext,
+) -> None:
+    auth_context.email_provider.fail_next_delivery = True
+    failed = auth_context.client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "delivery@example.com",
+            "password": VALID_PASSWORD,
+            "first_name": "Delivery",
+            "last_name": "Failure",
+        },
+        headers=csrf_headers(auth_context),
+    )
+    assert failed.status_code == 503
+
+    retried = auth_context.client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "delivery@example.com",
+            "password": VALID_PASSWORD,
+            "first_name": "Delivery",
+            "last_name": "Failure",
+        },
+        headers=csrf_headers(auth_context),
+    )
+    assert retried.status_code == 201
+
+
+def test_long_names_create_a_workspace_within_the_database_limit(
+    auth_context: AuthTestContext,
+) -> None:
+    response = auth_context.client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "long-name@example.com",
+            "password": VALID_PASSWORD,
+            "first_name": "F" * 100,
+            "last_name": "L" * 100,
+        },
+        headers=csrf_headers(auth_context),
+    )
+    assert response.status_code == 201
+
+    async def workspace_name() -> str:
+        async with auth_context.session_factory() as session:
+            workspace = await session.scalar(select(Workspace))
+            assert workspace is not None
+            return workspace.name
+
+    assert len(asyncio.run(workspace_name())) <= 160

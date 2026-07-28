@@ -78,7 +78,6 @@ from app.schemas.agent import (
 )
 from app.schemas.auth import (
     CurrentUserResponse,
-    RefreshTokenRequest,
     RoleAssignmentRequest,
     RoleResponse,
     TokenResponse,
@@ -252,7 +251,6 @@ __all__ = [
     "PipelineStageResponse",
     "PipelineStageUpdate",
     "PipelineUpdate",
-    "RefreshTokenRequest",
     "RoleAssignmentRequest",
     "RoleResponse",
     "SortDirection",

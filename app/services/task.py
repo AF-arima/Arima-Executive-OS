@@ -16,7 +16,6 @@ from app.database.repositories import (
     ProjectRepository,
     TaskFilters,
     TaskRepository,
-    UserRepository,
 )
 from app.schemas.common import SortDirection
 from app.schemas.task import TaskCreate, TaskSortField, TaskUpdate
@@ -41,14 +40,13 @@ class TaskService:
         self.session = session
         self.tasks = TaskRepository(session)
         self.projects = ProjectRepository(session)
-        self.users = UserRepository(session)
 
     async def create(self, data: TaskCreate, actor: User) -> Task:
-        project = await self._get_active_project(data.project_id)
+        project = await self._get_active_project(data.project_id, actor)
         if not can_create_task(actor, project):
             raise PermissionDeniedError
-        if data.assigned_to is not None:
-            await self._require_active_user(data.assigned_to)
+        if data.assigned_to is not None and data.assigned_to != actor.id:
+            raise PermissionDeniedError
 
         task = Task(
             title=data.title,
@@ -96,23 +94,30 @@ class TaskService:
     async def list(
         self,
         filters: TaskFilters,
+        actor: User,
         *,
         limit: int,
         offset: int,
         sort_by: TaskSortField,
         direction: SortDirection,
     ) -> Page[Task]:
+        if (
+            filters.assigned_to is not None
+            and filters.assigned_to != actor.id
+        ):
+            raise PermissionDeniedError
         return await self.tasks.list_filtered(
             filters,
             now=datetime.now(timezone.utc),
+            owner_id=actor.id,
             limit=limit,
             offset=offset,
             sort_by=sort_by,
             direction=direction,
         )
 
-    async def get(self, task_id: UUID) -> Task:
-        task = await self.tasks.get(task_id)
+    async def get(self, task_id: UUID, actor: User) -> Task:
+        task = await self.tasks.get_owned(task_id, actor.id)
         if task is None:
             raise ResourceNotFoundError("Task not found")
         return task
@@ -123,14 +128,13 @@ class TaskService:
         data: TaskUpdate,
         actor: User,
     ) -> Task:
-        task = await self.tasks.get_for_update(task_id)
+        task = await self.tasks.get_owned_for_update(task_id, actor.id)
         if task is None:
             raise ResourceNotFoundError("Task not found")
-        source_snapshot = await self.projects.get(task.project_id)
-        if source_snapshot is None:
-            raise ResourceNotFoundError("Project not found")
-        if source_snapshot.archived_at is not None:
-            raise ResourceConflictError("Archived projects are read-only")
+        source_snapshot = await self._get_active_project(
+            task.project_id,
+            actor,
+        )
         if not can_edit_task(actor, task, source_snapshot):
             raise PermissionDeniedError
 
@@ -161,6 +165,11 @@ class TaskService:
         if source_project is None or destination is None:
             raise ResourceNotFoundError("Project not found")
         if (
+            source_project.owner_id != actor.id
+            or destination.owner_id != actor.id
+        ):
+            raise PermissionDeniedError
+        if (
             source_project.archived_at is not None
             or destination.archived_at is not None
         ):
@@ -173,8 +182,8 @@ class TaskService:
         assigned_to = values.pop("assigned_to", task.assignee_id)
         if assigned_to is not None and not isinstance(assigned_to, UUID):
             raise ResourceConflictError("Invalid assignee")
-        if assigned_to is not None and assigned_to != task.assignee_id:
-            await self._require_active_user(assigned_to)
+        if assigned_to is not None and assigned_to != actor.id:
+            raise PermissionDeniedError
 
         old_status = task.status
         old_assignee = task.assignee_id
@@ -226,10 +235,10 @@ class TaskService:
         return task
 
     async def delete(self, task_id: UUID, actor: User) -> None:
-        task = await self.tasks.get_for_update(task_id)
+        task = await self.tasks.get_owned_for_update(task_id, actor.id)
         if task is None:
             raise ResourceNotFoundError("Task not found")
-        project = await self._get_active_project(task.project_id)
+        project = await self._get_active_project(task.project_id, actor)
         if not can_delete_task(actor, project):
             raise PermissionDeniedError
         entity_id = task.id
@@ -245,18 +254,17 @@ class TaskService:
         await self.session.commit()
         await dashboard_cache.invalidate()
 
-    async def _get_active_project(self, project_id: UUID) -> Project:
-        project = await self.projects.get_for_update(project_id)
+    async def _get_active_project(
+        self,
+        project_id: UUID,
+        actor: User,
+    ) -> Project:
+        project = await self.projects.get_owned_for_update(
+            project_id,
+            actor.id,
+        )
         if project is None:
             raise ResourceNotFoundError("Project not found")
         if project.archived_at is not None:
             raise ResourceConflictError("Archived projects are read-only")
         return project
-
-    async def _require_active_user(self, user_id: UUID) -> User:
-        user = await self.users.get_with_roles(user_id)
-        if user is None:
-            raise ResourceNotFoundError("User not found")
-        if not user.is_active:
-            raise ResourceConflictError("Inactive users cannot be assigned")
-        return user

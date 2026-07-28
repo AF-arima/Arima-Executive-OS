@@ -53,11 +53,13 @@ def create_project(
     context: AuthTestContext,
     headers: dict[str, str],
     name: str,
+    *,
+    status: str = "active",
 ) -> dict[str, object]:
     response = context.client.post(
         "/api/v1/projects",
         headers=headers,
-        json={"name": name, "status": "active"},
+        json={"name": name, "status": status},
     )
     assert response.status_code == 201
     return response.json()
@@ -179,7 +181,7 @@ def test_dashboard_permissions_cache_refresh_and_invalidation(
         manager_headers,
         project_id=owned["id"],
         title="Completed",
-        assigned_to=analyst["id"],
+        assigned_to=manager["id"],
         status="completed",
         priority="high",
     )
@@ -188,7 +190,7 @@ def test_dashboard_permissions_cache_refresh_and_invalidation(
         manager_headers,
         project_id=owned["id"],
         title="Overdue",
-        assigned_to=analyst["id"],
+        assigned_to=manager["id"],
         priority="urgent",
         due_date=now - timedelta(days=1),
     )
@@ -213,8 +215,8 @@ def test_dashboard_permissions_cache_refresh_and_invalidation(
         "/api/v1/dashboard/summary",
         headers=analyst_headers,
     ).json()
-    assert analyst_summary["total_projects"] == 1
-    assert analyst_summary["total_tasks"] == 2
+    assert analyst_summary["total_projects"] == 0
+    assert analyst_summary["total_tasks"] == 0
     other_summary = management_context.client.get(
         "/api/v1/dashboard/summary",
         headers=other_manager_headers,
@@ -222,12 +224,12 @@ def test_dashboard_permissions_cache_refresh_and_invalidation(
     assert other_summary["total_projects"] == 1
     assert other_summary["total_tasks"] == 1
     for headers in (executive_headers, viewer_headers):
-        global_summary = management_context.client.get(
+        isolated_summary = management_context.client.get(
             "/api/v1/dashboard/summary",
             headers=headers,
         ).json()
-        assert global_summary["total_projects"] == 2
-        assert global_summary["total_tasks"] == 3
+        assert isolated_summary["total_projects"] == 0
+        assert isolated_summary["total_tasks"] == 0
 
     cached = management_context.client.get(
         "/api/v1/dashboard/summary",

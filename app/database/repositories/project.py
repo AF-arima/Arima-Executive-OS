@@ -37,6 +37,32 @@ class ProjectRepository(AsyncRepository[Project]):
             .with_for_update()
         )
 
+    async def get_owned(
+        self,
+        project_id: UUID,
+        owner_id: UUID,
+    ) -> Project | None:
+        return await self.session.scalar(
+            select(Project).where(
+                Project.id == project_id,
+                Project.owner_id == owner_id,
+            )
+        )
+
+    async def get_owned_for_update(
+        self,
+        project_id: UUID,
+        owner_id: UUID,
+    ) -> Project | None:
+        return await self.session.scalar(
+            select(Project)
+            .where(
+                Project.id == project_id,
+                Project.owner_id == owner_id,
+            )
+            .with_for_update()
+        )
+
     async def get_many_for_update(
         self,
         project_ids: set[UUID],

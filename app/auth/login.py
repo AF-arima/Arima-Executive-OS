@@ -14,9 +14,12 @@ async def login_credentials(request: Request) -> UserLogin:
         ("application/x-www-form-urlencoded", "multipart/form-data")
     ):
         form = await request.form()
+        remember_value = form.get("remember_me", "")
         payload: Any = {
             "email": form.get("username"),
             "password": form.get("password"),
+            "remember_me": isinstance(remember_value, str)
+            and remember_value.lower() in {"1", "true", "on", "yes"},
         }
     else:
         try:

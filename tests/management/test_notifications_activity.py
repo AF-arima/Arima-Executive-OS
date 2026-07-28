@@ -25,12 +25,12 @@ UTC = timezone.utc
 def test_notification_ownership_lifecycle_and_assignment_integration(
     management_context: AuthTestContext,
 ) -> None:
-    _, manager_headers = prepare_user(
+    manager, manager_headers = prepare_user(
         management_context,
         "notification-manager@example.com",
         "manager",
     )
-    analyst, analyst_headers = prepare_user(
+    _, analyst_headers = prepare_user(
         management_context,
         "notification-analyst@example.com",
         "analyst",
@@ -50,14 +50,14 @@ def test_notification_ownership_lifecycle_and_assignment_integration(
         manager_headers,
         project_id=project["id"],
         title="Assigned",
-        assigned_to=analyst["id"],
+        assigned_to=manager["id"],
     )
-    analyst_list = management_context.client.get(
+    manager_list = management_context.client.get(
         "/api/v1/notifications",
-        headers=analyst_headers,
+        headers=manager_headers,
     ).json()
-    assert analyst_list["total"] == 1
-    notification = analyst_list["items"][0]
+    assert manager_list["total"] == 1
+    notification = manager_list["items"][0]
     assert notification["type"] == "task_assigned"
     assert notification["entity_id"] == task["id"]
     assert "dedupe_key" not in notification
@@ -65,36 +65,43 @@ def test_notification_ownership_lifecycle_and_assignment_integration(
     noop = management_context.client.patch(
         f"/api/v1/tasks/{task['id']}",
         headers=manager_headers,
-        json={"assigned_to": analyst["id"]},
+        json={"assigned_to": manager["id"]},
     )
     assert noop.status_code == 200
     assert (
         management_context.client.get(
             "/api/v1/notifications/unread-count",
-            headers=analyst_headers,
+            headers=manager_headers,
         ).json()["unread_count"]
         == 1
     )
 
     first_read = management_context.client.patch(
         f"/api/v1/notifications/{notification['id']}/read",
-        headers=analyst_headers,
+        headers=manager_headers,
     )
     assert first_read.status_code == 200
     read_at = first_read.json()["read_at"]
     second_read = management_context.client.patch(
         f"/api/v1/notifications/{notification['id']}/read",
-        headers=analyst_headers,
+        headers=manager_headers,
     )
     assert second_read.status_code == 200
     assert second_read.json()["read_at"] == read_at
 
-    reassign = management_context.client.patch(
-        f"/api/v1/tasks/{task['id']}",
-        headers=manager_headers,
-        json={"assigned_to": viewer["id"]},
-    )
-    assert reassign.status_code == 200
+    async def create_viewer_notification() -> None:
+        async with management_context.session_factory() as session:
+            session.add(
+                Notification(
+                    user_id=UUID(str(viewer["id"])),
+                    type=NotificationType.SYSTEM,
+                    title="Viewer notification",
+                    message="Tenant-scoped notification",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(create_viewer_notification())
     viewer_notification = management_context.client.get(
         "/api/v1/notifications",
         headers=viewer_headers,
@@ -144,22 +151,16 @@ def test_project_status_expiry_and_due_notification_generation(
         "notification-owner@example.com",
         "manager",
     )
-    _, executive_headers = prepare_user(
+    project = create_project(
         management_context,
-        "notification-executive@example.com",
-        "executive",
+        owner_headers,
+        "Owned status",
+        status="planning",
     )
-    project_response = management_context.client.post(
-        "/api/v1/projects",
-        headers=executive_headers,
-        json={"name": "Owned status", "owner_id": owner["id"]},
-    )
-    assert project_response.status_code == 201
-    project = project_response.json()
     assert (
         management_context.client.patch(
             f"/api/v1/projects/{project['id']}",
-            headers=executive_headers,
+            headers=owner_headers,
             json={"status": "active"},
         ).status_code
         == 200
@@ -169,11 +170,11 @@ def test_project_status_expiry_and_due_notification_generation(
         headers=owner_headers,
         params={"type": "project_status_changed"},
     ).json()
-    assert status_items["total"] == 1
+    assert status_items["total"] == 0
 
     due_task = create_task(
         management_context,
-        executive_headers,
+        owner_headers,
         project_id=project["id"],
         title="Due soon",
         assigned_to=owner["id"],
@@ -207,7 +208,7 @@ def test_project_status_expiry_and_due_notification_generation(
         "/api/v1/notifications",
         headers=owner_headers,
     ).json()
-    assert listed["total"] == 3
+    assert listed["total"] == 2
     assert all(item["title"] != "Expired" for item in listed["items"])
     assert any(
         item["type"] == "task_due_soon"
@@ -277,7 +278,7 @@ def test_activity_permissions_filters_safe_metadata_and_deleted_tasks(
         "activity-other@example.com",
         "manager",
     )
-    analyst, analyst_headers = prepare_user(
+    _, analyst_headers = prepare_user(
         management_context,
         "activity-analyst@example.com",
         "analyst",
@@ -302,7 +303,6 @@ def test_activity_permissions_filters_safe_metadata_and_deleted_tasks(
         manager_headers,
         project_id=project["id"],
         title="Deleted activity",
-        assigned_to=analyst["id"],
     )
     create_task(
         management_context,
@@ -315,11 +315,7 @@ def test_activity_permissions_filters_safe_metadata_and_deleted_tasks(
         headers=analyst_headers,
         params={"entity": "task"},
     ).json()
-    assert analyst_before["total"] >= 1
-    assert all(
-        set(item["metadata"]) == {"project_id"}
-        for item in analyst_before["items"]
-    )
+    assert analyst_before["total"] == 0
 
     assert (
         management_context.client.delete(
@@ -354,13 +350,13 @@ def test_activity_permissions_filters_safe_metadata_and_deleted_tasks(
         params={"entity": "task", "action": "delete"},
     ).json()
     assert analyst_after["total"] == 0
-    global_activity = management_context.client.get(
+    isolated_activity = management_context.client.get(
         "/api/v1/activity",
         headers=executive_headers,
         params={"entity": "task", "action": "delete"},
     ).json()
-    assert global_activity["total"] == 1
+    assert isolated_activity["total"] == 0
     timestamps = [
-        item["timestamp"] for item in global_activity["items"]
+        item["timestamp"] for item in manager_activity.json()["items"]
     ]
     assert timestamps == sorted(timestamps, reverse=True)

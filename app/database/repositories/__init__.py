@@ -40,6 +40,15 @@ from app.database.repositories.refresh_token import RefreshTokenRepository
 from app.database.repositories.role import RoleRepository
 from app.database.repositories.task import TaskFilters, TaskRepository
 from app.database.repositories.user import UserRepository
+from app.database.repositories.security import (
+    RateLimitRepository,
+    SecurityEventRepository,
+    SecurityTokenRepository,
+)
+from app.database.repositories.workspace import (
+    WorkspaceMembershipRepository,
+    WorkspaceRepository,
+)
 
 __all__ = [
     "AgentApprovalRepository",
@@ -72,10 +81,15 @@ __all__ = [
     "ProjectAnalyticsRow",
     "ProjectFilters",
     "RefreshTokenRepository",
+    "RateLimitRepository",
     "RoleRepository",
     "TaskRepository",
     "TaskAnalyticsRaw",
     "TaskFilters",
     "UserRepository",
+    "SecurityEventRepository",
+    "SecurityTokenRepository",
     "WorkloadRow",
+    "WorkspaceMembershipRepository",
+    "WorkspaceRepository",
 ]

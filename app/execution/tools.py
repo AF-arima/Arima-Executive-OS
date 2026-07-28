@@ -32,7 +32,11 @@ from app.execution.types import (
 from app.services.audit import record_audit
 from app.services.exceptions import PermissionDeniedError
 from app.services.notification import enqueue_agent_notification
-from app.services.permissions import can_invoke_agents, can_manage_memory
+from app.services.permissions import (
+    can_invoke_agents,
+    can_manage_memory,
+    can_view_conversation,
+)
 
 UTC = timezone.utc
 
@@ -69,6 +73,8 @@ class ToolExecutionEngine:
         conversation = await self.conversations.get(run.conversation_id)
         if conversation is None:
             raise ToolFailure("Conversation not found")
+        if not can_view_conversation(actor, conversation):
+            raise PermissionDeniedError
         tool = await self.tools.get_by_slug(invocation.slug)
         if tool is None or not tool.is_enabled:
             raise ToolFailure(f"Tool is not enabled: {invocation.slug}")
@@ -187,9 +193,19 @@ class ToolExecutionEngine:
         execution_id: UUID,
         actor: User,
     ) -> None:
+        if not can_invoke_agents(actor):
+            raise PermissionDeniedError
         execution = await self.executions.get_for_update(execution_id)
         if execution is None:
             raise ToolFailure("Tool execution not found")
+        run = await self.runs.get(execution.run_id)
+        if run is None:
+            raise ToolFailure("Run not found")
+        conversation = await self.conversations.get(run.conversation_id)
+        if conversation is None:
+            raise ToolFailure("Conversation not found")
+        if not can_view_conversation(actor, conversation):
+            raise PermissionDeniedError
         if execution.status in {
             ToolExecutionStatus.SUCCEEDED,
             ToolExecutionStatus.FAILED,

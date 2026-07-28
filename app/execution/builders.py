@@ -35,6 +35,7 @@ from app.schemas.crm import CRMSortField
 from app.schemas.project import ProjectSortField
 from app.schemas.task import TaskSortField
 from app.services.permissions import (
+    can_view_conversation,
     can_approve_agent_actions,
     can_invoke_agents,
     can_manage_agents,
@@ -79,6 +80,8 @@ class ContextBuilder:
         conversation = await self.conversations.get(run.conversation_id)
         if conversation is None:
             raise ContextBuildFailure("Conversation not found")
+        if not can_view_conversation(actor, conversation):
+            raise ContextBuildFailure("Actor cannot access this run")
 
         message_page = await self.messages.list_for_conversation(
             conversation.id,

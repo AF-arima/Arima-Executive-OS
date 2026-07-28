@@ -19,6 +19,7 @@ class TokenClaims:
     issued_at: datetime
     expires_at: datetime
     jti: UUID
+    session_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,22 +37,24 @@ class JWTService:
         subject: UUID,
         *,
         expires_delta: timedelta | None = None,
+        session_id: UUID | None = None,
     ) -> EncodedToken:
         lifetime = expires_delta or timedelta(
             minutes=self.settings.access_token_expire_minutes
         )
-        return self._create_token(subject, "access", lifetime)
+        return self._create_token(subject, "access", lifetime, session_id)
 
     def create_refresh_token(
         self,
         subject: UUID,
         *,
         expires_delta: timedelta | None = None,
+        session_id: UUID | None = None,
     ) -> EncodedToken:
         lifetime = expires_delta or timedelta(
             days=self.settings.refresh_token_expire_days
         )
-        return self._create_token(subject, "refresh", lifetime)
+        return self._create_token(subject, "refresh", lifetime, session_id)
 
     def decode_token(
         self,
@@ -64,7 +67,19 @@ class JWTService:
                 token,
                 self.settings.jwt_secret_key.get_secret_value(),
                 algorithms=[self.settings.jwt_algorithm],
-                options={"require": ["sub", "type", "iat", "exp", "jti"]},
+                issuer=self.settings.jwt_issuer,
+                audience=self.settings.jwt_audience,
+                options={
+                    "require": [
+                        "sub",
+                        "type",
+                        "iat",
+                        "exp",
+                        "jti",
+                        "iss",
+                        "aud",
+                    ]
+                },
             )
             token_type = payload["type"]
             if token_type != expected_type:
@@ -74,6 +89,11 @@ class JWTService:
 
             subject = UUID(payload["sub"])
             jti = UUID(payload["jti"])
+            session_id = (
+                UUID(payload["sid"]) if payload.get("sid") is not None else None
+            )
+            if token_type == "refresh" and session_id is None:
+                raise InvalidTokenError("Refresh token is missing a session")
             issued_at = self._timestamp(payload["iat"])
             expires_at = self._timestamp(payload["exp"])
         except (
@@ -90,6 +110,7 @@ class JWTService:
             issued_at=issued_at,
             expires_at=expires_at,
             jti=jti,
+            session_id=session_id,
         )
 
     def _create_token(
@@ -97,6 +118,7 @@ class JWTService:
         subject: UUID,
         token_type: TokenType,
         lifetime: timedelta,
+        session_id: UUID | None,
     ) -> EncodedToken:
         issued_at = datetime.now(timezone.utc)
         expires_at = issued_at + lifetime
@@ -106,6 +128,7 @@ class JWTService:
             issued_at=issued_at,
             expires_at=expires_at,
             jti=uuid4(),
+            session_id=session_id,
         )
         payload = {
             "sub": str(claims.subject),
@@ -113,7 +136,11 @@ class JWTService:
             "iat": claims.issued_at,
             "exp": claims.expires_at,
             "jti": str(claims.jti),
+            "iss": self.settings.jwt_issuer,
+            "aud": self.settings.jwt_audience,
         }
+        if claims.session_id is not None:
+            payload["sid"] = str(claims.session_id)
         value = jwt.encode(
             payload,
             self.settings.jwt_secret_key.get_secret_value(),

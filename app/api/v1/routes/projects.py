@@ -63,7 +63,6 @@ async def list_projects(
     sort_by: ProjectSortField = ProjectSortField.CREATED_AT,
     direction: SortDirection = SortDirection.DESC,
 ) -> ProjectListResponse:
-    del current_user
     page = await ProjectService(session).list(
         ProjectFilters(
             status=project_status,
@@ -71,6 +70,7 @@ async def list_projects(
             created_by=created_by,
             search=search,
         ),
+        current_user,
         limit=limit,
         offset=offset,
         sort_by=sort_by,
@@ -93,8 +93,7 @@ async def get_project(
     session: SessionDependency,
     current_user: CurrentUser,
 ) -> Project:
-    del current_user
-    return await ProjectService(session).get(project_id)
+    return await ProjectService(session).get(project_id, current_user)
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)

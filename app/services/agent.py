@@ -29,6 +29,7 @@ from app.database.repositories import (
     AgentMemoryRepository,
     AgentMessageRepository,
     AgentRunRepository,
+    AgentToolExecutionRepository,
     Page,
     UserRepository,
 )
@@ -884,11 +885,10 @@ class RunService:
         actor: User,
     ) -> Page[AgentRun]:
         triggered_by_id = filters.triggered_by_id
-        if not has_full_access(actor):
-            if triggered_by_id is not None and triggered_by_id != actor.id:
-                raise PermissionDeniedError
-            triggered_by_id = actor.id
+        if triggered_by_id is not None and triggered_by_id != actor.id:
+            raise PermissionDeniedError
         return await self.runs.list_scoped(
+            owner_id=actor.id,
             conversation_id=filters.conversation_id,
             agent_id=filters.agent_id,
             triggered_by_id=triggered_by_id,
@@ -913,6 +913,7 @@ class ApprovalService:
         self.approvals = AgentApprovalRepository(session)
         self.runs = AgentRunRepository(session)
         self.conversations = AgentConversationRepository(session)
+        self.executions = AgentToolExecutionRepository(session)
 
     async def create(
         self,
@@ -930,6 +931,10 @@ class ApprovalService:
             raise ResourceConflictError(
                 "Approval expiration must be in the future"
             )
+        if data.tool_execution_id is not None:
+            execution = await self.executions.get(data.tool_execution_id)
+            if execution is None or execution.run_id != run.id:
+                raise ResourceNotFoundError("Tool execution not found")
         approval = await self.approvals.create(
             {
                 **data.model_dump(),
@@ -1006,7 +1011,7 @@ class ApprovalService:
     ) -> AgentApproval:
         if not can_approve_agent_actions(actor):
             raise PermissionDeniedError
-        approval = await self._pending_locked(approval_id)
+        approval = await self._pending_locked(approval_id, actor)
         if (
             approval.expires_at is None
             or _as_aware(approval.expires_at) > _now()
@@ -1029,16 +1034,19 @@ class ApprovalService:
         if not can_approve_agent_actions(actor):
             raise PermissionDeniedError
         return await self.approvals.list_pending_unexpired(
+            owner_id=actor.id,
             now=_now(),
             limit=limit,
             offset=offset,
         )
 
     async def get(self, approval_id: UUID, actor: User) -> AgentApproval:
-        approval = await self.approvals.get(approval_id)
+        approval = await self.approvals.get_for_owner(
+            approval_id,
+            owner_id=actor.id,
+        )
         if approval is None:
             raise ResourceNotFoundError("Approval not found")
-        await self._run_and_conversation(approval.run_id, actor)
         return approval
 
     async def list(
@@ -1048,7 +1056,16 @@ class ApprovalService:
     ) -> Page[AgentApproval]:
         if not can_approve_agent_actions(actor):
             raise PermissionDeniedError
+        if (
+            filters.requested_by_id is not None
+            and filters.requested_by_id != actor.id
+        ) or (
+            filters.decided_by_id is not None
+            and filters.decided_by_id != actor.id
+        ):
+            raise PermissionDeniedError
         return await self.approvals.list_scoped(
+            owner_id=actor.id,
             run_id=filters.run_id,
             status=filters.status,
             requested_by_id=filters.requested_by_id,
@@ -1067,7 +1084,7 @@ class ApprovalService:
         *,
         require_approver: bool = True,
     ) -> AgentApproval:
-        approval = await self._pending_locked(approval_id)
+        approval = await self._pending_locked(approval_id, actor)
         if require_approver and not can_approve_agent_actions(actor):
             raise PermissionDeniedError
         if not require_approver and (
@@ -1124,8 +1141,16 @@ class ApprovalService:
         await self.session.commit()
         return approval
 
-    async def _pending_locked(self, approval_id: UUID) -> AgentApproval:
-        approval = await self.approvals.get_for_update(approval_id)
+    async def _pending_locked(
+        self,
+        approval_id: UUID,
+        actor: User,
+    ) -> AgentApproval:
+        approval = await self.approvals.get_for_owner(
+            approval_id,
+            owner_id=actor.id,
+            for_update=True,
+        )
         if approval is None:
             raise ResourceNotFoundError("Approval not found")
         if approval.status is not AgentApprovalStatus.PENDING:
@@ -1324,6 +1349,14 @@ class MemoryService:
             message = await self.messages.get(data.source_message_id)
             if message is None:
                 raise ResourceNotFoundError("Message not found")
+            message_conversation = await self.conversations.get(
+                message.conversation_id
+            )
+            if (
+                message_conversation is None
+                or not can_view_conversation(actor, message_conversation)
+            ):
+                raise PermissionDeniedError
             if (
                 data.conversation_id is not None
                 and message.conversation_id != data.conversation_id

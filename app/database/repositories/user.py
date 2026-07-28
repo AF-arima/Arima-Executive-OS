@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,13 +14,16 @@ class UserRepository(AsyncRepository[User]):
 
     async def get_by_email(self, email: str) -> User | None:
         return await self.session.scalar(
-            select(User).where(User.email == email)
+            select(User).where(func.lower(User.email) == email.strip().lower())
         )
 
     async def get_with_roles(self, user_id: UUID) -> User | None:
         return await self.session.scalar(
             select(User)
             .where(User.id == user_id)
-            .options(selectinload(User.roles))
+            .options(
+                selectinload(User.roles),
+                selectinload(User.owned_workspace),
+            )
             .execution_options(populate_existing=True)
         )

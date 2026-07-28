@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
@@ -89,6 +89,7 @@ class ProjectSearchTool(SessionTool):
                 owner_id=_project_owner(context),
                 search=data.query,
             ),
+            context.current_user,
             limit=data.limit,
             offset=data.offset,
             sort_by=ProjectSortField.UPDATED_AT,
@@ -118,12 +119,16 @@ class ProjectSummaryTool(SessionTool):
         self, payload: BaseModel, context: ToolExecutionContext
     ) -> Any:
         data = IdentifierInput.model_validate(payload)
-        project = await ProjectService(self.session).get(data.id)
+        project = await ProjectService(self.session).get(
+            data.id,
+            context.current_user,
+        )
         owner = _project_owner(context)
         if owner is not None and project.owner_id != owner:
             raise ToolExecutionError("Project is not visible")
         tasks = await TaskService(self.session).list(
             TaskFilters(project_id=project.id),
+            context.current_user,
             limit=100,
             offset=0,
             sort_by=TaskSortField.UPDATED_AT,
@@ -188,6 +193,7 @@ class TaskSearchTool(SessionTool):
         )
         page = await TaskService(self.session).list(
             TaskFilters(search=data.query, assigned_to=assigned_to),
+            context.current_user,
             limit=data.limit,
             offset=data.offset,
             sort_by=TaskSortField.UPDATED_AT,
@@ -217,7 +223,10 @@ class TaskSummaryTool(SessionTool):
         self, payload: BaseModel, context: ToolExecutionContext
     ) -> Any:
         data = IdentifierInput.model_validate(payload)
-        task = await TaskService(self.session).get(data.id)
+        task = await TaskService(self.session).get(
+            data.id,
+            context.current_user,
+        )
         roles = user_roles(context.current_user)
         if (
             not has_full_access(context.current_user)
@@ -705,19 +714,42 @@ class SystemStatusTool(SessionTool):
     async def execute(
         self, payload: BaseModel, context: ToolExecutionContext
     ) -> Any:
-        counts: dict[str, int] = {}
-        for label, model in (
-            ("projects", Project),
-            ("tasks", Task),
-            ("leads", Lead),
-            ("opportunities", Deal),
-        ):
-            counts[label] = int(
+        user_id = context.current_user.id
+        counts = {
+            "projects": int(
                 await self.session.scalar(
-                    select(func.count()).select_from(model)
+                    select(func.count()).select_from(Project).where(
+                        Project.owner_id == user_id
+                    )
                 )
                 or 0
-            )
+            ),
+            "tasks": int(
+                await self.session.scalar(
+                    select(func.count())
+                    .select_from(Task)
+                    .join(Project, Project.id == Task.project_id)
+                    .where(Project.owner_id == user_id)
+                )
+                or 0
+            ),
+            "leads": int(
+                await self.session.scalar(
+                    select(func.count()).select_from(Lead).where(
+                        or_(Lead.owner_id == user_id, Lead.created_by == user_id)
+                    )
+                )
+                or 0
+            ),
+            "opportunities": int(
+                await self.session.scalar(
+                    select(func.count()).select_from(Deal).where(
+                        Deal.owner_id == user_id
+                    )
+                )
+                or 0
+            ),
+        }
         return {
             "status": "operational",
             "counts": counts,

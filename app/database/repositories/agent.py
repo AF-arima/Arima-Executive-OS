@@ -300,6 +300,7 @@ class AgentMessageRepository(AgentRepositoryBase[AgentMessage]):
     async def list_scoped(
         self,
         *,
+        owner_id: UUID | None = None,
         conversation_id: UUID | None = None,
         run_id: UUID | None = None,
         role: MessageRole | None = None,
@@ -348,6 +349,7 @@ class AgentRunRepository(AgentRepositoryBase[AgentRun]):
     async def list_scoped(
         self,
         *,
+        owner_id: UUID | None = None,
         conversation_id: UUID | None = None,
         agent_id: UUID | None = None,
         triggered_by_id: UUID | None = None,
@@ -368,6 +370,11 @@ class AgentRunRepository(AgentRepositoryBase[AgentRun]):
             statement = statement.where(
                 AgentRun.conversation_id == conversation_id
             )
+        if owner_id is not None:
+            statement = statement.join(
+                AgentConversation,
+                AgentConversation.id == AgentRun.conversation_id,
+            ).where(AgentConversation.owner_id == owner_id)
         if agent_id is not None:
             statement = statement.where(AgentRun.agent_id == agent_id)
         if triggered_by_id is not None:
@@ -502,13 +509,18 @@ class AgentApprovalRepository(AgentRepositoryBase[AgentApproval]):
     async def list_pending_unexpired(
         self,
         *,
+        owner_id: UUID | None = None,
         now: datetime,
         limit: int = 50,
         offset: int = 0,
     ) -> Page[AgentApproval]:
-        return await paginate(
-            self.session,
+        statement = (
             select(AgentApproval)
+            .join(AgentRun, AgentRun.id == AgentApproval.run_id)
+            .join(
+                AgentConversation,
+                AgentConversation.id == AgentRun.conversation_id,
+            )
             .where(
                 AgentApproval.status == AgentApprovalStatus.PENDING,
                 or_(
@@ -516,7 +528,14 @@ class AgentApprovalRepository(AgentRepositoryBase[AgentApproval]):
                     AgentApproval.expires_at > now,
                 ),
             )
-            .order_by(
+        )
+        if owner_id is not None:
+            statement = statement.where(
+                AgentConversation.owner_id == owner_id
+            )
+        return await paginate(
+            self.session,
+            statement.order_by(
                 AgentApproval.requested_at,
                 AgentApproval.id,
             ),
@@ -527,6 +546,7 @@ class AgentApprovalRepository(AgentRepositoryBase[AgentApproval]):
     async def list_scoped(
         self,
         *,
+        owner_id: UUID,
         run_id: UUID | None = None,
         status: AgentApprovalStatus | None = None,
         requested_by_id: UUID | None = None,
@@ -535,7 +555,15 @@ class AgentApprovalRepository(AgentRepositoryBase[AgentApproval]):
         limit: int = 50,
         offset: int = 0,
     ) -> Page[AgentApproval]:
-        statement = select(AgentApproval)
+        statement = (
+            select(AgentApproval)
+            .join(AgentRun, AgentRun.id == AgentApproval.run_id)
+            .join(
+                AgentConversation,
+                AgentConversation.id == AgentRun.conversation_id,
+            )
+            .where(AgentConversation.owner_id == owner_id)
+        )
         if run_id is not None:
             statement = statement.where(AgentApproval.run_id == run_id)
         if status is not None:
@@ -564,6 +592,29 @@ class AgentApprovalRepository(AgentRepositoryBase[AgentApproval]):
             limit=limit,
             offset=offset,
         )
+
+    async def get_for_owner(
+        self,
+        approval_id: UUID,
+        *,
+        owner_id: UUID,
+        for_update: bool = False,
+    ) -> AgentApproval | None:
+        statement = (
+            select(AgentApproval)
+            .join(AgentRun, AgentRun.id == AgentApproval.run_id)
+            .join(
+                AgentConversation,
+                AgentConversation.id == AgentRun.conversation_id,
+            )
+            .where(
+                AgentApproval.id == approval_id,
+                AgentConversation.owner_id == owner_id,
+            )
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return await self.session.scalar(statement)
 
 
 class AgentMemoryRepository(AgentRepositoryBase[AgentMemory]):

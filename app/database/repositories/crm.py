@@ -140,6 +140,7 @@ class CRMRepository:
         self,
         pipeline_id: UUID,
         *,
+        created_by: UUID | None = None,
         for_update: bool = False,
     ) -> Pipeline | None:
         statement = (
@@ -147,14 +148,20 @@ class CRMRepository:
             .where(Pipeline.id == pipeline_id)
             .options(selectinload(Pipeline.stages))
         )
+        if created_by is not None:
+            statement = statement.where(Pipeline.created_by == created_by)
         if for_update:
             statement = statement.with_for_update()
         return await self.session.scalar(statement)
 
-    async def default_pipeline(self) -> Pipeline | None:
+    async def default_pipeline(self, created_by: UUID) -> Pipeline | None:
         return await self.session.scalar(
             select(Pipeline)
-            .where(Pipeline.is_default.is_(True), Pipeline.is_active.is_(True))
+            .where(
+                Pipeline.created_by == created_by,
+                Pipeline.is_default.is_(True),
+                Pipeline.is_active.is_(True),
+            )
             .options(selectinload(Pipeline.stages))
             .with_for_update()
         )
@@ -163,9 +170,15 @@ class CRMRepository:
         self,
         stage_id: UUID,
         *,
+        created_by: UUID | None = None,
         for_update: bool = False,
     ) -> PipelineStage | None:
         statement = select(PipelineStage).where(PipelineStage.id == stage_id)
+        if created_by is not None:
+            statement = statement.join(
+                Pipeline,
+                PipelineStage.pipeline_id == Pipeline.id,
+            ).where(Pipeline.created_by == created_by)
         if for_update:
             statement = statement.with_for_update()
         return await self.session.scalar(statement)
@@ -431,9 +444,10 @@ class CRMRepository:
             offset=offset,
         )
 
-    async def list_pipelines(self) -> list[Pipeline]:
+    async def list_pipelines(self, created_by: UUID) -> list[Pipeline]:
         result = await self.session.scalars(
             select(Pipeline)
+            .where(Pipeline.created_by == created_by)
             .options(selectinload(Pipeline.stages))
             .order_by(Pipeline.name, Pipeline.id)
         )

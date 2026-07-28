@@ -24,6 +24,8 @@ from app.database.models import (
     Contact,
     Deal,
     Lead,
+    Pipeline,
+    PipelineStage,
     Project,
     Task,
 )
@@ -160,15 +162,24 @@ class ActivityRepository:
     def _visibility_condition(
         scope: AnalyticsScope,
     ) -> ColumnElement[bool]:
-        full_access = not frozenset(
-            {"administrator", "executive"}
-        ).isdisjoint(scope.roles)
         project_entities = (
             AuditEntity.PROJECT,
             AuditEntity.TASK,
         )
-        crm_entities = tuple(
-            item for item in AuditEntity if item not in project_entities
+        crm_entities = (
+            AuditEntity.COMPANY,
+            AuditEntity.CONTACT,
+            AuditEntity.LEAD,
+            AuditEntity.PIPELINE,
+            AuditEntity.PIPELINE_STAGE,
+            AuditEntity.DEAL,
+            AuditEntity.CRM_NOTE,
+            AuditEntity.CRM_ACTIVITY,
+        )
+        actor_entities = tuple(
+            item
+            for item in AuditEntity
+            if item not in project_entities and item not in crm_entities
         )
         if scope.kind is VisibilityKind.GLOBAL:
             project_visibility: ColumnElement[bool] = true()
@@ -192,10 +203,7 @@ class ActivityRepository:
                     ),
                 ),
             )
-        if full_access:
-            crm_visibility: ColumnElement[bool] = true()
-        else:
-            crm_visibility = or_(
+        crm_visibility = or_(
                 and_(
                     AuditLog.entity == AuditEntity.COMPANY,
                     AuditLog.entity_id.in_(
@@ -235,6 +243,25 @@ class ActivityRepository:
                         select(Deal.id).where(
                             Deal.owner_id == scope.user_id
                         )
+                    ),
+                ),
+                and_(
+                    AuditLog.entity == AuditEntity.PIPELINE,
+                    AuditLog.entity_id.in_(
+                        select(Pipeline.id).where(
+                            Pipeline.created_by == scope.user_id
+                        )
+                    ),
+                ),
+                and_(
+                    AuditLog.entity == AuditEntity.PIPELINE_STAGE,
+                    AuditLog.entity_id.in_(
+                        select(PipelineStage.id)
+                        .join(
+                            Pipeline,
+                            Pipeline.id == PipelineStage.pipeline_id,
+                        )
+                        .where(Pipeline.created_by == scope.user_id)
                     ),
                 ),
                 and_(
@@ -298,7 +325,7 @@ class ActivityRepository:
                         )
                     ),
                 ),
-            )
+        )
         return or_(
             and_(
                 AuditLog.entity.in_(project_entities),
@@ -307,5 +334,9 @@ class ActivityRepository:
             and_(
                 AuditLog.entity.in_(crm_entities),
                 crm_visibility,
+            ),
+            and_(
+                AuditLog.entity.in_(actor_entities),
+                AuditLog.actor_id == scope.user_id,
             ),
         )

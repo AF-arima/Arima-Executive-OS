@@ -22,6 +22,34 @@ class TokenReuseError(InvalidTokenError):
     pass
 
 
+class InvalidSecurityTokenError(AuthenticationError):
+    pass
+
+
+class EmailNotVerifiedError(AuthenticationError):
+    pass
+
+
+class AccountLockedError(AuthenticationError):
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__("Account temporarily locked")
+        self.retry_after_seconds = retry_after_seconds
+
+
+class RateLimitExceededError(AuthenticationError):
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__("Too many requests")
+        self.retry_after_seconds = retry_after_seconds
+
+
+class EmailDeliveryError(AuthenticationError):
+    pass
+
+
+class CsrfValidationError(AuthenticationError):
+    pass
+
+
 class UserNotFoundError(AuthenticationError):
     pass
 

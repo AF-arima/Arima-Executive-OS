@@ -12,6 +12,7 @@ from app.api.v1.routes import (
     outreach,
     projects,
     tasks,
+    voice,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -26,3 +27,4 @@ api_router.include_router(activity.router)
 api_router.include_router(notifications.router)
 api_router.include_router(crm.router)
 api_router.include_router(outreach.router)
+api_router.include_router(voice.router)

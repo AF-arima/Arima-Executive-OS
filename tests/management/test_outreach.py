@@ -11,7 +11,9 @@ from app.database.models import (
     Notification,
     NotificationType,
     OutreachApproval,
+    WorkspaceMembership,
 )
+from app.database.repositories.workspace import WorkspaceRepository
 from tests.auth.conftest import AuthTestContext
 from tests.auth.helpers import bearer, grant_role, login_user, register_user
 
@@ -95,7 +97,7 @@ def test_outreach_template_draft_visibility_and_analytics(
 def test_approval_workflow_is_reviewer_scoped_and_audited(
     management_context: AuthTestContext,
 ) -> None:
-    _, manager_headers = user_with_role(
+    manager, manager_headers = user_with_role(
         management_context, "approval-manager@example.com", "manager"
     )
     reviewer, reviewer_headers = user_with_role(
@@ -123,6 +125,29 @@ def test_approval_workflow_is_reviewer_scoped_and_audited(
             "body_html": "<p>Proposal</p>",
         },
     ).json()
+    cross_tenant = management_context.client.post(
+        f"/api/v1/outreach/drafts/{draft['id']}/approval",
+        headers=manager_headers,
+        json={"reviewer_id": reviewer["id"]},
+    )
+    assert cross_tenant.status_code == 403
+
+    async def share_workspace() -> None:
+        async with management_context.session_factory() as session:
+            workspace = await WorkspaceRepository(session).get_by_owner(
+                UUID(str(manager["id"]))
+            )
+            assert workspace is not None
+            session.add(
+                WorkspaceMembership(
+                    workspace_id=workspace.id,
+                    user_id=UUID(str(reviewer["id"])),
+                    role="reviewer",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(share_workspace())
     requested = management_context.client.post(
         f"/api/v1/outreach/drafts/{draft['id']}/approval",
         headers=manager_headers,

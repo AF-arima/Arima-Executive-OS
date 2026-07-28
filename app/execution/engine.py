@@ -56,7 +56,6 @@ from app.services.exceptions import (
     ResourceNotFoundError,
 )
 from app.services.notification import enqueue_agent_notification
-from app.services.permissions import can_view_conversation
 
 UTC = timezone.utc
 
@@ -104,9 +103,7 @@ class ExecutionEngine:
         tool_invocations: tuple[ToolInvocation, ...] = (),
         _already_running: bool = False,
     ) -> ExecutionResult:
-        run = await self.runs.get(run_id)
-        if run is None:
-            raise ResourceNotFoundError("Run not found")
+        run = await RunService(self.session).get(run_id, actor)
         expected_status = (
             AgentRunStatus.RUNNING
             if _already_running
@@ -119,8 +116,6 @@ class ExecutionEngine:
         conversation = await self.conversations.get(run.conversation_id)
         if conversation is None:
             raise ResourceNotFoundError("Conversation not found")
-        if not can_view_conversation(actor, conversation):
-            raise InvalidTransition("Actor cannot execute this run")
 
         try:
             if not _already_running:
@@ -262,9 +257,7 @@ class ExecutionEngine:
         provider_name: str,
         tool_invocations: tuple[ToolInvocation, ...],
     ) -> ExecutionResult:
-        run = await self.runs.get(run_id)
-        if run is None:
-            raise ResourceNotFoundError("Run not found")
+        run = await RunService(self.session).get(run_id, actor)
         if run.status is not AgentRunStatus.WAITING_FOR_APPROVAL:
             raise InvalidTransition(
                 "Only approval-waiting runs can be resumed"
@@ -279,9 +272,7 @@ class ExecutionEngine:
         )
 
     async def cancel(self, run_id: UUID, actor: User) -> None:
-        run = await self.runs.get(run_id)
-        if run is None:
-            raise ResourceNotFoundError("Run not found")
+        run = await RunService(self.session).get(run_id, actor)
         if run.status in {
             AgentRunStatus.COMPLETED,
             AgentRunStatus.FAILED,
@@ -291,6 +282,7 @@ class ExecutionEngine:
         if run.model_provider:
             await self.providers.get(run.model_provider).cancel(run.id)
         approval_page = await self.approvals.list_scoped(
+            owner_id=actor.id,
             run_id=run.id,
             status=AgentApprovalStatus.PENDING,
             limit=100,

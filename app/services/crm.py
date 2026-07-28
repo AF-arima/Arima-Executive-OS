@@ -363,14 +363,22 @@ class CRMService:
         if lead.status is not LeadStatus.QUALIFIED:
             raise ResourceConflictError("Only qualified leads can be converted")
         pipeline = (
-            await self.repository.get_pipeline(data.pipeline_id, for_update=True)
+            await self.repository.get_pipeline(
+                data.pipeline_id,
+                created_by=actor.id,
+                for_update=True,
+            )
             if data.pipeline_id is not None
             else await self._default_pipeline(actor)
         )
         if pipeline is None or not pipeline.is_active:
             raise ResourceNotFoundError("Pipeline not found")
         stage = (
-            await self.repository.get_stage(data.stage_id, for_update=True)
+            await self.repository.get_stage(
+                data.stage_id,
+                created_by=actor.id,
+                for_update=True,
+            )
             if data.stage_id is not None
             else next((item for item in pipeline.stages if not item.is_closed), None)
         )
@@ -438,7 +446,7 @@ class CRMService:
     ) -> Pipeline:
         self._require_pipeline_admin(actor)
         if data.is_default:
-            await self._clear_default()
+            await self._clear_default(actor)
         pipeline = Pipeline(**data.model_dump(), created_by=actor.id)
         await self._persist(
             pipeline, actor, AuditEntity.PIPELINE, "Pipeline already exists"
@@ -447,12 +455,13 @@ class CRMService:
         return pipeline
 
     async def list_pipelines(self, actor: User) -> list[Pipeline]:
-        del actor
-        return await self.repository.list_pipelines()
+        return await self.repository.list_pipelines(actor.id)
 
     async def get_pipeline(self, pipeline_id: UUID, actor: User) -> Pipeline:
-        del actor
-        pipeline = await self.repository.get_pipeline(pipeline_id)
+        pipeline = await self.repository.get_pipeline(
+            pipeline_id,
+            created_by=actor.id,
+        )
         if pipeline is None:
             raise ResourceNotFoundError("Pipeline not found")
         return pipeline
@@ -462,13 +471,15 @@ class CRMService:
     ) -> Pipeline:
         self._require_pipeline_admin(actor)
         pipeline = await self.repository.get_pipeline(
-            pipeline_id, for_update=True
+            pipeline_id,
+            created_by=actor.id,
+            for_update=True,
         )
         if pipeline is None:
             raise ResourceNotFoundError("Pipeline not found")
         values = data.model_dump(exclude_unset=True)
         if values.get("is_default") is True:
-            await self._clear_default(exclude_id=pipeline.id)
+            await self._clear_default(actor, exclude_id=pipeline.id)
         if values.get("is_active") is False and pipeline.is_default:
             raise ResourceConflictError("Default pipeline cannot be deactivated")
         await self._update(
@@ -483,7 +494,9 @@ class CRMService:
     async def delete_pipeline(self, pipeline_id: UUID, actor: User) -> None:
         self._require_pipeline_admin(actor)
         pipeline = await self.repository.get_pipeline(
-            pipeline_id, for_update=True
+            pipeline_id,
+            created_by=actor.id,
+            for_update=True,
         )
         if pipeline is None:
             raise ResourceNotFoundError("Pipeline not found")
@@ -510,7 +523,9 @@ class CRMService:
     ) -> PipelineStage:
         self._require_pipeline_admin(actor)
         pipeline = await self.repository.get_pipeline(
-            pipeline_id, for_update=True
+            pipeline_id,
+            created_by=actor.id,
+            for_update=True,
         )
         if pipeline is None:
             raise ResourceNotFoundError("Pipeline not found")
@@ -530,7 +545,11 @@ class CRMService:
         actor: User,
     ) -> PipelineStage:
         self._require_pipeline_admin(actor)
-        stage = await self.repository.get_stage(stage_id, for_update=True)
+        stage = await self.repository.get_stage(
+            stage_id,
+            created_by=actor.id,
+            for_update=True,
+        )
         if stage is None or stage.pipeline_id != pipeline_id:
             raise ResourceNotFoundError("Pipeline stage not found")
         values = data.model_dump(exclude_unset=True)
@@ -540,7 +559,9 @@ class CRMService:
             raise ResourceConflictError("A won stage must be closed")
         if is_won and not stage.is_won:
             pipeline = await self.repository.get_pipeline(
-                pipeline_id, for_update=True
+                pipeline_id,
+                created_by=actor.id,
+                for_update=True,
             )
             if pipeline is not None and any(item.is_won for item in pipeline.stages):
                 raise ResourceConflictError("Pipeline already has a won stage")
@@ -557,7 +578,11 @@ class CRMService:
         self, pipeline_id: UUID, stage_id: UUID, actor: User
     ) -> None:
         self._require_pipeline_admin(actor)
-        stage = await self.repository.get_stage(stage_id, for_update=True)
+        stage = await self.repository.get_stage(
+            stage_id,
+            created_by=actor.id,
+            for_update=True,
+        )
         if stage is None or stage.pipeline_id != pipeline_id:
             raise ResourceNotFoundError("Pipeline stage not found")
         if await self.repository.has_active_deals(stage_id=stage.id):
@@ -581,7 +606,9 @@ class CRMService:
     ) -> list[PipelineStage]:
         self._require_pipeline_admin(actor)
         pipeline = await self.repository.get_pipeline(
-            pipeline_id, for_update=True
+            pipeline_id,
+            created_by=actor.id,
+            for_update=True,
         )
         if pipeline is None:
             raise ResourceNotFoundError("Pipeline not found")
@@ -610,7 +637,11 @@ class CRMService:
     async def create_deal(self, data: DealCreate, actor: User) -> Deal:
         self._require_create(actor)
         owner_id = await self._owner(data.owner_id, actor)
-        stage = await self._validate_stage(data.pipeline_id, data.stage_id)
+        stage = await self._validate_stage(
+            data.pipeline_id,
+            data.stage_id,
+            actor,
+        )
         await self._require_related(Company, data.company_id, actor)
         await self._require_related(Contact, data.primary_contact_id, actor)
         status, close_date = self._deal_state(stage)
@@ -684,7 +715,7 @@ class CRMService:
         stage_id = values.get("stage_id", deal.stage_id)
         if not isinstance(pipeline_id, UUID) or not isinstance(stage_id, UUID):
             raise ResourceConflictError("Pipeline and stage are required")
-        stage = await self._validate_stage(pipeline_id, stage_id)
+        stage = await self._validate_stage(pipeline_id, stage_id, actor)
         await self._apply_owner_update(deal, data, actor)
         await self._apply_deal_stage(
             deal,
@@ -715,7 +746,11 @@ class CRMService:
         actor: User,
     ) -> Deal:
         deal = await self._mutable(Deal, deal_id, actor)
-        stage = await self._validate_stage(deal.pipeline_id, data.stage_id)
+        stage = await self._validate_stage(
+            deal.pipeline_id,
+            data.stage_id,
+            actor,
+        )
         old_stage = deal.stage_id
         await self._apply_deal_stage(
             deal,
@@ -804,6 +839,8 @@ class CRMService:
         self._require_contributor(actor)
         await self._require_parent(data, actor)
         if data.assigned_to is not None:
+            if data.assigned_to != actor.id:
+                raise PermissionDeniedError
             await self._require_user(data.assigned_to)
         activity = CRMActivity(**data.model_dump(), actor_id=actor.id)
         await self._persist(
@@ -867,6 +904,8 @@ class CRMService:
             and values["assigned_to"] is not None
             and values["assigned_to"] != old_assignee
         ):
+            if values["assigned_to"] != actor.id:
+                raise PermissionDeniedError
             await self._require_user(values["assigned_to"])
         if values.get("assigned_to", old_assignee) != old_assignee:
             self._enqueue_assignment(
@@ -1108,9 +1147,16 @@ class CRMService:
             raise ResourceConflictError("A CRM parent is required")
 
     async def _validate_stage(
-        self, pipeline_id: UUID, stage_id: UUID
+        self,
+        pipeline_id: UUID,
+        stage_id: UUID,
+        actor: User,
     ) -> PipelineStage:
-        stage = await self.repository.get_stage(stage_id, for_update=True)
+        stage = await self.repository.get_stage(
+            stage_id,
+            created_by=actor.id,
+            for_update=True,
+        )
         if stage is None or stage.pipeline_id != pipeline_id:
             raise ResourceConflictError("Stage does not belong to pipeline")
         return stage
@@ -1149,7 +1195,7 @@ class CRMService:
         )
 
     async def _default_pipeline(self, actor: User) -> Pipeline:
-        pipeline = await self.repository.default_pipeline()
+        pipeline = await self.repository.default_pipeline(actor.id)
         if pipeline is not None:
             return pipeline
         if not can_manage_pipelines(actor):
@@ -1185,8 +1231,12 @@ class CRMService:
         )
         return pipeline
 
-    async def _clear_default(self, exclude_id: UUID | None = None) -> None:
-        current = await self.repository.default_pipeline()
+    async def _clear_default(
+        self,
+        actor: User,
+        exclude_id: UUID | None = None,
+    ) -> None:
+        current = await self.repository.default_pipeline(actor.id)
         if current is not None and current.id != exclude_id:
             current.is_default = False
             await self.session.flush()

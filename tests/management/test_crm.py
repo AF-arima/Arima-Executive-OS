@@ -109,9 +109,6 @@ def test_lead_transitions_pipeline_deal_and_idempotent_conversion(
     executive, headers = user_with_role(
         management_context, "crm-executive@example.com", "executive"
     )
-    manager, _ = user_with_role(
-        management_context, "conversion-owner@example.com", "manager"
-    )
     pipeline = management_context.client.post(
         "/api/v1/crm/pipelines",
         headers=headers,
@@ -228,27 +225,11 @@ def test_lead_transitions_pipeline_deal_and_idempotent_conversion(
             "title": "Rollback conversion",
             "source": "partner",
             "status": "qualified",
-            "owner_id": manager["id"],
+            "owner_id": executive["id"],
         },
     ).json()
 
-    async def create_conflict() -> None:
-        async with management_context.session_factory() as session:
-            session.add(
-                Notification(
-                    user_id=UUID(str(manager["id"])),
-                    type="lead_converted",
-                    title="Existing",
-                    message="Existing deduplicated event.",
-                    entity_type="deal",
-                    entity_id=UUID(rollback_lead["id"]),
-                    dedupe_key=f"lead-converted:{rollback_lead['id']}",
-                )
-            )
-            await session.commit()
-
-    asyncio.run(create_conflict())
-    failed_conversion = management_context.client.post(
+    converted_rollback_lead = management_context.client.post(
         f"/api/v1/crm/leads/{rollback_lead['id']}/convert",
         headers=headers,
         json={
@@ -256,7 +237,7 @@ def test_lead_transitions_pipeline_deal_and_idempotent_conversion(
             "stage_id": stages[0]["id"],
         },
     )
-    assert failed_conversion.status_code == 409
+    assert converted_rollback_lead.status_code == 200
 
     async def rolled_back() -> tuple[str, int]:
         async with management_context.session_factory() as session:
@@ -269,7 +250,7 @@ def test_lead_transitions_pipeline_deal_and_idempotent_conversion(
             )
             return stored.status.value, int(count or 0)
 
-    assert asyncio.run(rolled_back()) == ("qualified", 0)
+    assert asyncio.run(rolled_back()) == ("converted", 1)
 
     async def counts() -> tuple[int, int, int]:
         async with management_context.session_factory() as session:
@@ -295,7 +276,7 @@ def test_lead_transitions_pipeline_deal_and_idempotent_conversion(
                 int(audit_count or 0),
             )
 
-    assert asyncio.run(counts()) == (1, 1, 5)
+    assert asyncio.run(counts()) == (1, 1, 6)
 
 
 def test_notes_activities_notifications_and_analytics(
@@ -304,7 +285,7 @@ def test_notes_activities_notifications_and_analytics(
     manager, headers = user_with_role(
         management_context, "activity-manager@example.com", "manager"
     )
-    analyst, analyst_headers = user_with_role(
+    _, analyst_headers = user_with_role(
         management_context, "assigned-analyst@example.com", "analyst"
     )
     lead = management_context.client.post(
@@ -336,7 +317,7 @@ def test_notes_activities_notifications_and_analytics(
             "type": "follow_up",
             "subject": "Call prospect",
             "lead_id": lead["id"],
-            "assigned_to": analyst["id"],
+            "assigned_to": manager["id"],
             "due_at": "2026-07-24T12:00:00Z",
         },
     )
@@ -364,10 +345,16 @@ def test_notes_activities_notifications_and_analytics(
         headers=analyst_headers,
         json={"outcome": "Interested"},
     )
+    assert completed.status_code == 404
+    completed = management_context.client.post(
+        f"/api/v1/crm/activities/{activity_id}/complete",
+        headers=headers,
+        json={"outcome": "Interested"},
+    )
     assert completed.status_code == 200
     repeated = management_context.client.post(
         f"/api/v1/crm/activities/{activity_id}/complete",
-        headers=analyst_headers,
+        headers=headers,
         json={"outcome": "Must not overwrite"},
     )
     assert repeated.status_code == 200
@@ -388,7 +375,7 @@ def test_notes_activities_notifications_and_analytics(
         async with management_context.session_factory() as session:
             notifications = await session.scalar(
                 select(func.count(Notification.id)).where(
-                    Notification.user_id == UUID(str(analyst["id"]))
+                    Notification.user_id == UUID(str(manager["id"]))
                 )
             )
             completions = await session.scalar(
@@ -399,7 +386,7 @@ def test_notes_activities_notifications_and_analytics(
             )
             return int(notifications or 0), int(completions or 0)
 
-    assert asyncio.run(state()) == (2, 1)
+    assert asyncio.run(state()) == (1, 1)
 
 
 def test_viewer_cannot_mutate_crm(

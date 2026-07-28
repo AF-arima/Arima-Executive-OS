@@ -2,9 +2,11 @@ from dataclasses import dataclass
 from enum import Enum
 from uuid import UUID
 
+from app.core.config import get_settings
 from app.database.models import AgentConversation, AgentMemory, Project, Task, User
 
 FULL_ACCESS_ROLES = frozenset({"administrator", "executive"})
+WORKSPACE_MANAGEMENT_ROLES = FULL_ACCESS_ROLES | {"manager"}
 
 
 class VisibilityKind(str, Enum):
@@ -25,19 +27,36 @@ def user_roles(user: User) -> frozenset[str]:
 
 
 def has_full_access(user: User) -> bool:
-    return not FULL_ACCESS_ROLES.isdisjoint(user_roles(user))
+    """Compatibility predicate for legacy data services.
+
+    Platform roles are not a tenant-boundary bypass.  A future support-access
+    workflow must be explicit, audited, and time-limited rather than inferred
+    from an application role.
+    """
+
+    del user
+    return False
+
+
+def has_platform_administration(user: User) -> bool:
+    """Return whether a configured operator may administer platform assets."""
+
+    settings = get_settings()
+    configured_operators = set(settings.platform_operator_user_ids)
+    if configured_operators:
+        return user.id in configured_operators
+    return (
+        settings.environment != "production"
+        and "administrator" in user_roles(user)
+    )
 
 
 def analytics_scope(user: User) -> AnalyticsScope:
     roles = user_roles(user)
-    if FULL_ACCESS_ROLES.intersection(roles):
-        kind = VisibilityKind.GLOBAL
-    elif "manager" in roles:
+    if WORKSPACE_MANAGEMENT_ROLES.intersection(roles):
         kind = VisibilityKind.OWNED
-    elif "analyst" in roles:
-        kind = VisibilityKind.ASSIGNED
     else:
-        kind = VisibilityKind.GLOBAL
+        kind = VisibilityKind.ASSIGNED
     return AnalyticsScope(
         kind=kind,
         user_id=user.id,
@@ -59,9 +78,7 @@ def workload_scope(user: User) -> AnalyticsScope:
 
 def crm_scope(user: User) -> AnalyticsScope:
     roles = user_roles(user)
-    if FULL_ACCESS_ROLES.intersection(roles):
-        kind = VisibilityKind.GLOBAL
-    elif "manager" in roles:
+    if WORKSPACE_MANAGEMENT_ROLES.intersection(roles):
         kind = VisibilityKind.OWNED
     else:
         kind = VisibilityKind.ASSIGNED
@@ -74,7 +91,7 @@ def crm_scope(user: User) -> AnalyticsScope:
 
 def can_create_crm(user: User) -> bool:
     roles = user_roles(user)
-    return bool(FULL_ACCESS_ROLES.intersection(roles) or "manager" in roles)
+    return bool(WORKSPACE_MANAGEMENT_ROLES.intersection(roles))
 
 
 def can_contribute_crm(user: User) -> bool:
@@ -87,26 +104,20 @@ def can_manage_crm_record(
     owner_id: UUID | None,
     created_by: UUID,
 ) -> bool:
-    if has_full_access(user):
-        return True
     roles = user_roles(user)
-    if "manager" in roles:
+    if WORKSPACE_MANAGEMENT_ROLES.intersection(roles):
         return owner_id == user.id or created_by == user.id
     return "analyst" in roles and owner_id == user.id
 
 
 def can_manage_pipelines(user: User) -> bool:
-    return has_full_access(user)
+    return bool(WORKSPACE_MANAGEMENT_ROLES.intersection(user_roles(user)))
 
 
 def outreach_scope(user: User) -> AnalyticsScope:
     roles = user_roles(user)
     return AnalyticsScope(
-        kind=(
-            VisibilityKind.GLOBAL
-            if FULL_ACCESS_ROLES.intersection(roles)
-            else VisibilityKind.OWNED
-        ),
+        kind=VisibilityKind.OWNED,
         user_id=user.id,
         roles=tuple(sorted(roles)),
     )
@@ -127,12 +138,13 @@ def can_approve_outreach(user: User) -> bool:
 
 def can_create_project(user: User) -> bool:
     roles = user_roles(user)
-    return bool(FULL_ACCESS_ROLES.intersection(roles) or "manager" in roles)
+    return bool(WORKSPACE_MANAGEMENT_ROLES.intersection(roles))
 
 
 def can_manage_project(user: User, project: Project) -> bool:
-    return has_full_access(user) or (
-        "manager" in user_roles(user) and project.owner_id == user.id
+    return bool(
+        WORKSPACE_MANAGEMENT_ROLES.intersection(user_roles(user))
+        and project.owner_id == user.id
     )
 
 
@@ -151,7 +163,7 @@ def can_delete_task(user: User, project: Project) -> bool:
 
 
 def can_manage_agents(user: User) -> bool:
-    return has_full_access(user)
+    return has_platform_administration(user)
 
 
 def can_invoke_agents(user: User) -> bool:
@@ -174,12 +186,10 @@ def can_view_conversation(
     user: User,
     conversation: AgentConversation,
 ) -> bool:
-    return has_full_access(user) or conversation.owner_id == user.id
+    return conversation.owner_id == user.id
 
 
 def can_manage_memory(user: User, memory: AgentMemory | None = None) -> bool:
-    if has_full_access(user):
-        return True
     if memory is None:
         return can_invoke_agents(user)
     return memory.owner_id == user.id

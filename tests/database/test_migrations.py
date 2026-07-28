@@ -3,7 +3,9 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from app.database.models import Base
 
@@ -52,7 +54,7 @@ def test_initial_migration_matches_metadata_and_downgrades(
     } == {"uq_roles_name"}
     assert {
         index["name"] for index in inspector.get_indexes("users")
-    } == {"ix_users_email"}
+    } == {"ix_users_email", "ix_users_locked_until"}
     assert {
         "ix_projects_archived_at",
         "ix_projects_created_at",
@@ -347,4 +349,108 @@ def test_dashboard_migration_backfills_audit_project_scope(
         column["name"]
         for column in inspector.get_columns("audit_logs")
     }
+    engine.dispose()
+
+
+def test_case_insensitive_email_migration_normalizes_legacy_accounts(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "email-normalization.sqlite3"
+    async_url = f"sqlite+aiosqlite:///{database_path}"
+    sync_url = f"sqlite:///{database_path}"
+    config = migration_config(async_url)
+    command.upgrade(config, "20260728_0010")
+
+    user_id = uuid4().hex
+    timestamp = "2026-07-28 12:00:00+00:00"
+    engine = create_engine(sync_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users "
+                "(email, hashed_password, first_name, last_name, "
+                "is_active, is_verified, failed_login_attempts, id, "
+                "created_at, updated_at) "
+                "VALUES ('Legacy.User@Example.COM', 'hashed', 'Legacy', "
+                "'User', 1, 1, 0, :id, :created_at, :updated_at)"
+            ),
+            {
+                "id": user_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+        )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = create_engine(sync_url)
+    with engine.connect() as connection:
+        assert connection.scalar(
+            text("SELECT email FROM users WHERE id = :id"),
+            {"id": user_id},
+        ) == "legacy.user@example.com"
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO users "
+                    "(email, hashed_password, first_name, last_name, "
+                    "is_active, is_verified, failed_login_attempts, id, "
+                    "created_at, updated_at) "
+                    "VALUES ('LEGACY.USER@example.com', 'hashed', 'Other', "
+                    "'User', 1, 1, 0, :id, :created_at, :updated_at)"
+                ),
+                {
+                    "id": uuid4().hex,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                },
+            )
+    engine.dispose()
+
+
+def test_identity_migration_bounds_legacy_workspace_names(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "identity-workspace-name.sqlite3"
+    async_url = f"sqlite+aiosqlite:///{database_path}"
+    sync_url = f"sqlite:///{database_path}"
+    config = migration_config(async_url)
+    command.upgrade(config, "20260726_0008")
+
+    user_id = uuid4().hex
+    first_name = "A" * 100
+    last_name = "B" * 100
+    timestamp = "2026-07-28 12:00:00+00:00"
+    engine = create_engine(sync_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users "
+                "(email, hashed_password, first_name, last_name, "
+                "is_active, is_verified, id, created_at, updated_at) "
+                "VALUES (:email, 'hashed', :first_name, :last_name, "
+                "1, 1, :id, :created_at, :updated_at)"
+            ),
+            {
+                "email": "long-name@example.com",
+                "first_name": first_name,
+                "last_name": last_name,
+                "id": user_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+        )
+    engine.dispose()
+
+    command.upgrade(config, "20260727_0009")
+    engine = create_engine(sync_url)
+    with engine.connect() as connection:
+        workspace_name = connection.scalar(
+            text("SELECT name FROM workspaces WHERE owner_id = :owner_id"),
+            {"owner_id": user_id},
+        )
+    assert workspace_name is not None
+    assert workspace_name.endswith(" Workspace")
+    assert len(workspace_name) == 160
     engine.dispose()

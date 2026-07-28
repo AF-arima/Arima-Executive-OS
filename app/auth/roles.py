@@ -11,7 +11,9 @@ DEFAULT_ROLES: dict[str, str] = {
     "analyst": "Analysis and reporting access",
     "viewer": "Read-only access",
 }
-DEFAULT_USER_ROLE = "viewer"
+# A personal workspace owner must be able to create and manage their own work.
+# Organization-level privileges still require explicit role assignment.
+DEFAULT_USER_ROLE = "manager"
 
 
 async def seed_default_roles(session: AsyncSession) -> dict[str, Role]:

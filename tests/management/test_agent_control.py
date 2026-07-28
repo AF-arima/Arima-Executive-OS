@@ -310,7 +310,7 @@ def test_conversation_ownership_message_ordering_and_closed_writes(
             "content": "Administrative response",
         },
     )
-    assert assistant.status_code == 201
+    assert assistant.status_code == 403
 
     messages = management_context.client.get(
         "/api/v1/messages",
@@ -318,7 +318,7 @@ def test_conversation_ownership_message_ordering_and_closed_writes(
         params={"conversation_id": conversation_id, "limit": 2, "offset": 1},
     )
     assert messages.status_code == 200
-    assert messages.json()["total"] == 4
+    assert messages.json()["total"] == 3
     assert [
         item["sequence_number"] for item in messages.json()["items"]
     ] == [2, 3]
@@ -512,7 +512,7 @@ def test_approval_and_memory_lifecycles_permissions_and_validation(
     owner, owner_headers = prepare_user(
         management_context,
         "approval-owner@example.com",
-        "analyst",
+        "manager",
     )
     _, other_headers = prepare_user(
         management_context,
@@ -579,17 +579,25 @@ def test_approval_and_memory_lifecycles_permissions_and_validation(
             "/api/v1/approvals/pending",
             headers=owner_headers,
         ).status_code
-        == 403
+        == 200
     )
     pending = management_context.client.get(
         "/api/v1/approvals/pending",
         headers=manager_headers,
     )
     assert pending.status_code == 200
-    assert pending.json()["total"] == 1
+    assert pending.json()["total"] == 0
+    assert (
+        management_context.client.patch(
+            f"/api/v1/approvals/{approval_id}",
+            headers=manager_headers,
+            json={"status": "approved", "decision_note": "Not my approval"},
+        ).status_code
+        == 404
+    )
     approved = management_context.client.patch(
         f"/api/v1/approvals/{approval_id}",
-        headers=manager_headers,
+        headers=owner_headers,
         json={"status": "approved", "decision_note": "Approved safely"},
     )
     assert approved.status_code == 200
@@ -598,7 +606,7 @@ def test_approval_and_memory_lifecycles_permissions_and_validation(
     assert (
         management_context.client.patch(
             f"/api/v1/approvals/{approval_id}",
-            headers=manager_headers,
+            headers=owner_headers,
             json={"status": "rejected"},
         ).status_code
         == 409
@@ -624,7 +632,7 @@ def test_approval_and_memory_lifecycles_permissions_and_validation(
     rejected_candidate = request_approval("reject-action")
     rejected = management_context.client.patch(
         f"/api/v1/approvals/{rejected_candidate['id']}",
-        headers=manager_headers,
+        headers=owner_headers,
         json={"status": "rejected"},
     )
     assert rejected.status_code == 200
@@ -654,7 +662,7 @@ def test_approval_and_memory_lifecycles_permissions_and_validation(
     asyncio.run(make_expired())
     expired = management_context.client.patch(
         f"/api/v1/approvals/{expired_candidate['id']}",
-        headers=manager_headers,
+        headers=owner_headers,
         json={"status": "expired"},
     )
     assert expired.status_code == 200

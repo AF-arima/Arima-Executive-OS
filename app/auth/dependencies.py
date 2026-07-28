@@ -5,11 +5,16 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.exceptions import InactiveUserError
+from app.auth.exceptions import (
+    EmailNotVerifiedError,
+    InactiveUserError,
+    InvalidTokenError,
+)
 from app.auth.service import AuthenticationService
 from app.auth.tokens import JWTService
 from app.database.models import User
 from app.database.session import get_session
+from app.services.permissions import has_platform_administration
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -22,8 +27,11 @@ async def get_current_user(
     token: BearerToken,
 ) -> User:
     claims = JWTService().decode_token(token, expected_type="access")
+    if claims.session_id is None:
+        raise InvalidTokenError
     return await AuthenticationService(session).get_current_user(
-        claims.subject
+        claims.subject,
+        session_id=claims.session_id,
     )
 
 
@@ -32,6 +40,19 @@ async def get_current_active_user(
 ) -> User:
     if not current_user.is_active:
         raise InactiveUserError
+    if not current_user.is_verified:
+        raise EmailNotVerifiedError
+    return current_user
+
+
+async def require_platform_operator(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> User:
+    if not has_platform_administration(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform operator access is required",
+        )
     return current_user
 
 

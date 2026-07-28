@@ -138,7 +138,6 @@ class AgentDefinitionRead(AgentReadSchema):
     slug: str
     name: str
     description: str | None
-    system_instructions: str
     status: AgentStatus
     version: int
     is_default: bool

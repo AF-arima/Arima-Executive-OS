@@ -36,19 +36,19 @@ def test_administrator_assigns_and_removes_role_idempotently(
     assigned = auth_context.client.post(
         endpoint,
         headers=headers,
-        json={"role_name": "manager"},
+        json={"role_name": "analyst"},
     )
     duplicate = auth_context.client.post(
         endpoint,
         headers=headers,
-        json={"role_name": "manager"},
+        json={"role_name": "analyst"},
     )
     removed = auth_context.client.delete(
-        f"{endpoint}/manager",
+        f"{endpoint}/analyst",
         headers=headers,
     )
     removed_again = auth_context.client.delete(
-        f"{endpoint}/manager",
+        f"{endpoint}/analyst",
         headers=headers,
     )
 
@@ -56,7 +56,7 @@ def test_administrator_assigns_and_removes_role_idempotently(
     assert duplicate.status_code == 200
     assert {role["name"] for role in assigned.json()["roles"]} == {
         "manager",
-        "viewer",
+        "analyst",
     }
     assert removed.status_code == 204
     assert removed_again.status_code == 204

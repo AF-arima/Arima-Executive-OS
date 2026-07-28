@@ -3,10 +3,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.auth.exceptions import (
+    AccountLockedError,
+    CsrfValidationError,
     DuplicateEmailError,
+    EmailDeliveryError,
+    EmailNotVerifiedError,
     InactiveUserError,
     InvalidCredentialsError,
+    InvalidSecurityTokenError,
     InvalidTokenError,
+    RateLimitExceededError,
     RoleNotFoundError,
     UserNotFoundError,
 )
@@ -31,6 +37,21 @@ def register_exception_handlers(app: FastAPI) -> None:
     )
     app.add_exception_handler(InactiveUserError, _inactive_user_handler)
     app.add_exception_handler(InvalidTokenError, _invalid_token_handler)
+    app.add_exception_handler(
+        InvalidSecurityTokenError,
+        _invalid_security_token_handler,
+    )
+    app.add_exception_handler(
+        EmailNotVerifiedError,
+        _email_not_verified_handler,
+    )
+    app.add_exception_handler(AccountLockedError, _account_locked_handler)
+    app.add_exception_handler(
+        RateLimitExceededError,
+        _rate_limit_exceeded_handler,
+    )
+    app.add_exception_handler(EmailDeliveryError, _email_delivery_handler)
+    app.add_exception_handler(CsrfValidationError, _csrf_validation_handler)
     app.add_exception_handler(UserNotFoundError, _user_not_found_handler)
     app.add_exception_handler(RoleNotFoundError, _role_not_found_handler)
     app.add_exception_handler(
@@ -88,6 +109,72 @@ async def _invalid_token_handler(
         status.HTTP_401_UNAUTHORIZED,
         "Invalid or expired token",
         BEARER_HEADERS,
+    )
+
+
+async def _invalid_security_token_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    return _error_response(
+        status.HTTP_400_BAD_REQUEST,
+        "Invalid or expired security token",
+    )
+
+
+async def _email_not_verified_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    return _error_response(
+        status.HTTP_403_FORBIDDEN,
+        "Email verification is required",
+    )
+
+
+async def _account_locked_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    if not isinstance(error, AccountLockedError):
+        raise error
+    return _error_response(
+        status.HTTP_423_LOCKED,
+        "Account temporarily locked. Try again later.",
+        {"Retry-After": str(error.retry_after_seconds)},
+    )
+
+
+async def _rate_limit_exceeded_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    if not isinstance(error, RateLimitExceededError):
+        raise error
+    return _error_response(
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        "Too many requests. Try again later.",
+        {"Retry-After": str(error.retry_after_seconds)},
+    )
+
+
+async def _email_delivery_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    return _error_response(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "Email delivery is temporarily unavailable",
+    )
+
+
+async def _csrf_validation_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    return _error_response(
+        status.HTTP_403_FORBIDDEN,
+        "CSRF validation failed",
     )
 
 

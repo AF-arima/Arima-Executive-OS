@@ -32,6 +32,7 @@ def test_access_token_contains_required_claims(
     assert claims.subject == subject
     assert claims.token_type == "access"
     assert claims.jti == token.claims.jti
+    assert claims.session_id is None
     assert claims.expires_at > claims.issued_at
 
 
@@ -78,6 +79,7 @@ def test_invalid_subject_is_rejected(jwt_service: JWTService) -> None:
         valid.value,
         jwt_service.settings.jwt_secret_key.get_secret_value(),
         algorithms=[jwt_service.settings.jwt_algorithm],
+        options={"verify_aud": False},
     )
     payload["sub"] = "not-a-uuid"
     invalid = jwt.encode(

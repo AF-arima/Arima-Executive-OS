@@ -66,7 +66,6 @@ async def list_tasks(
     sort_by: TaskSortField = TaskSortField.CREATED_AT,
     direction: SortDirection = SortDirection.DESC,
 ) -> TaskListResponse:
-    del current_user
     page = await TaskService(session).list(
         TaskFilters(
             status=task_status,
@@ -77,6 +76,7 @@ async def list_tasks(
             completed=completed,
             search=search,
         ),
+        current_user,
         limit=limit,
         offset=offset,
         sort_by=sort_by,
@@ -96,8 +96,7 @@ async def get_task(
     session: SessionDependency,
     current_user: CurrentUser,
 ) -> Task:
-    del current_user
-    return await TaskService(session).get(task_id)
+    return await TaskService(session).get(task_id, current_user)
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)

@@ -254,7 +254,7 @@ class Lead(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class Pipeline(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "crm_pipelines"
 
-    name: Mapped[str] = mapped_column(String(150), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000))
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -272,8 +272,14 @@ class Pipeline(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     deals: Mapped[list[Deal]] = relationship(back_populates="pipeline")
 
     __table_args__ = (
+        UniqueConstraint(
+            "created_by",
+            "name",
+            name="uq_crm_pipelines_creator_name",
+        ),
         Index(
-            "uq_crm_pipelines_default_active",
+            "uq_crm_pipelines_creator_default_active",
+            "created_by",
             "is_default",
             unique=True,
             postgresql_where=text("is_default AND is_active"),

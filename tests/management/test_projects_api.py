@@ -71,7 +71,13 @@ def test_project_crud_permissions_and_archive_read_only(
         headers=other_manager_headers,
         json={"name": "Stolen"},
     )
-    assert denied_update.status_code == 403
+    assert denied_update.status_code == 404
+    cross_owner_create = management_context.client.post(
+        "/api/v1/projects",
+        headers=other_manager_headers,
+        json={"name": "Other workspace", "owner_id": manager["id"]},
+    )
+    assert cross_owner_create.status_code == 403
     viewer_create = management_context.client.post(
         "/api/v1/projects",
         headers=viewer_headers,
@@ -91,7 +97,13 @@ def test_project_crud_permissions_and_archive_read_only(
         f"/api/v1/projects/{project_id}",
         headers=viewer_headers,
     )
-    assert viewer_read.status_code == 200
+    assert viewer_read.status_code == 404
+    other_workspace_projects = management_context.client.get(
+        "/api/v1/projects",
+        headers=other_manager_headers,
+    )
+    assert other_workspace_projects.status_code == 200
+    assert other_workspace_projects.json()["items"] == []
 
     archive = management_context.client.delete(
         f"/api/v1/projects/{project_id}",
@@ -100,7 +112,7 @@ def test_project_crud_permissions_and_archive_read_only(
     assert archive.status_code == 204
     archived = management_context.client.get(
         f"/api/v1/projects/{project_id}",
-        headers=viewer_headers,
+        headers=manager_headers,
     )
     assert archived.status_code == 200
     assert archived.json()["archived_at"] is not None
@@ -134,34 +146,29 @@ def test_project_crud_permissions_and_archive_read_only(
 def test_project_filters_search_sort_pagination_and_validation(
     management_context: AuthTestContext,
 ) -> None:
-    _, executive_headers = prepare_user(
+    executive, executive_headers = prepare_user(
         management_context,
         "executive@example.com",
         "executive",
-    )
-    owner, _ = prepare_user(
-        management_context,
-        "owner@example.com",
-        "viewer",
     )
     for payload in (
         {
             "name": "Zulu",
             "description": "Operations",
             "status": "active",
-            "owner_id": owner["id"],
+            "owner_id": executive["id"],
         },
         {
             "name": "Alpha",
             "description": "Operations plan",
             "status": "active",
-            "owner_id": owner["id"],
+            "owner_id": executive["id"],
         },
         {
             "name": "Beta",
             "description": "Finance",
             "status": "planning",
-            "owner_id": owner["id"],
+            "owner_id": executive["id"],
         },
     ):
         response = management_context.client.post(
@@ -176,7 +183,7 @@ def test_project_filters_search_sort_pagination_and_validation(
         headers=executive_headers,
         params={
             "status": "active",
-            "owner": owner["id"],
+            "owner": executive["id"],
             "search": "OPERATIONS",
             "sort_by": "name",
             "direction": "asc",

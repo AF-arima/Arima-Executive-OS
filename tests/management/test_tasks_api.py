@@ -5,12 +5,6 @@ from sqlalchemy import select
 
 from app.database.models import AuditAction, AuditEntity, AuditLog
 from tests.auth.conftest import AuthTestContext
-from tests.auth.helpers import (
-    bearer,
-    grant_role,
-    login_user,
-    register_user,
-)
 from tests.management.test_projects_api import prepare_user
 
 
@@ -22,7 +16,7 @@ def test_task_lifecycle_assignment_permissions_and_audit(
         "task-manager@example.com",
         "manager",
     )
-    analyst, analyst_headers = prepare_user(
+    analyst, _ = prepare_user(
         management_context,
         "analyst@example.com",
         "analyst",
@@ -32,10 +26,10 @@ def test_task_lifecycle_assignment_permissions_and_audit(
         "task-viewer@example.com",
         "viewer",
     )
-    _, other_analyst_headers = prepare_user(
+    _, other_manager_headers = prepare_user(
         management_context,
-        "other-analyst@example.com",
-        "analyst",
+        "other-manager@example.com",
+        "manager",
     )
     project_response = management_context.client.post(
         "/api/v1/projects",
@@ -45,7 +39,7 @@ def test_task_lifecycle_assignment_permissions_and_audit(
     assert project_response.status_code == 201
     project_id = project_response.json()["id"]
 
-    created = management_context.client.post(
+    cross_workspace_assignment = management_context.client.post(
         "/api/v1/tasks",
         headers=manager_headers,
         json={
@@ -56,35 +50,53 @@ def test_task_lifecycle_assignment_permissions_and_audit(
             "assigned_to": analyst["id"],
         },
     )
+    assert cross_workspace_assignment.status_code == 403
+
+    created = management_context.client.post(
+        "/api/v1/tasks",
+        headers=manager_headers,
+        json={
+            "title": "Ship report",
+            "description": "Executive reporting",
+            "priority": "high",
+            "project_id": project_id,
+        },
+    )
     assert created.status_code == 201
     task = created.json()
     task_id = task["id"]
-    assert task["assigned_to"] == analyst["id"]
+    assert task["assigned_to"] is None
     assert task["created_by"] == manager["id"]
 
     denied = management_context.client.patch(
         f"/api/v1/tasks/{task_id}",
-        headers=other_analyst_headers,
+        headers=other_manager_headers,
         json={"status": "in_progress"},
     )
-    assert denied.status_code == 403
-    analyst_reassign = management_context.client.patch(
+    assert denied.status_code == 404
+    other_workspace_tasks = management_context.client.get(
+        "/api/v1/tasks",
+        headers=other_manager_headers,
+    )
+    assert other_workspace_tasks.status_code == 200
+    assert other_workspace_tasks.json()["items"] == []
+    cross_workspace_reassign = management_context.client.patch(
         f"/api/v1/tasks/{task_id}",
-        headers=analyst_headers,
+        headers=manager_headers,
         json={"assigned_to": viewer["id"]},
     )
-    assert analyst_reassign.status_code == 403
+    assert cross_workspace_reassign.status_code == 403
 
     completed = management_context.client.patch(
         f"/api/v1/tasks/{task_id}",
-        headers=analyst_headers,
+        headers=manager_headers,
         json={"status": "completed"},
     )
     assert completed.status_code == 200
     assert completed.json()["completed_at"] is not None
     reopened = management_context.client.patch(
         f"/api/v1/tasks/{task_id}",
-        headers=analyst_headers,
+        headers=manager_headers,
         json={"status": "in_progress"},
     )
     assert reopened.status_code == 200
@@ -93,31 +105,31 @@ def test_task_lifecycle_assignment_permissions_and_audit(
     reassigned = management_context.client.patch(
         f"/api/v1/tasks/{task_id}",
         headers=manager_headers,
-        json={"assigned_to": viewer["id"], "priority": "urgent"},
+        json={"assigned_to": manager["id"], "priority": "urgent"},
     )
     assert reassigned.status_code == 200
-    assert reassigned.json()["assigned_to"] == viewer["id"]
+    assert reassigned.json()["assigned_to"] == manager["id"]
     assert (
         management_context.client.patch(
             f"/api/v1/tasks/{task_id}",
-            headers=analyst_headers,
+            headers=other_manager_headers,
             json={"title": "No longer assigned"},
         ).status_code
-        == 403
+        == 404
     )
     assert (
         management_context.client.get(
             f"/api/v1/tasks/{task_id}",
             headers=viewer_headers,
         ).status_code
-        == 200
+        == 404
     )
     assert (
         management_context.client.delete(
             f"/api/v1/tasks/{task_id}",
             headers=viewer_headers,
         ).status_code
-        == 403
+        == 404
     )
     deleted = management_context.client.delete(
         f"/api/v1/tasks/{task_id}",
@@ -140,32 +152,17 @@ def test_task_lifecycle_assignment_permissions_and_audit(
     actions = asyncio.run(get_actions())
     assert actions.count(AuditAction.CREATE) == 1
     assert actions.count(AuditAction.STATUS_CHANGE) == 2
-    assert actions.count(AuditAction.ASSIGNMENT) == 2
+    assert actions.count(AuditAction.ASSIGNMENT) == 1
     assert actions.count(AuditAction.DELETE) == 1
 
 
 def test_task_filters_search_sort_pagination_and_archived_project(
     management_context: AuthTestContext,
 ) -> None:
-    _, manager_headers = prepare_user(
+    manager, manager_headers = prepare_user(
         management_context,
         "filter-manager@example.com",
         "manager",
-    )
-    assignee = register_user(
-        management_context,
-        "filter-assignee@example.com",
-    )
-    grant_role(
-        management_context,
-        "filter-assignee@example.com",
-        "analyst",
-    )
-    assignee_headers = bearer(
-        login_user(
-            management_context,
-            "filter-assignee@example.com",
-        )["access_token"]
     )
     project = management_context.client.post(
         "/api/v1/projects",
@@ -179,7 +176,7 @@ def test_task_filters_search_sort_pagination_and_archived_project(
             "status": "in_progress",
             "priority": "urgent",
             "project_id": project["id"],
-            "assigned_to": assignee["id"],
+            "assigned_to": manager["id"],
             "due_date": "2020-01-01T00:00:00Z",
         },
         {
@@ -188,7 +185,7 @@ def test_task_filters_search_sort_pagination_and_archived_project(
             "status": "completed",
             "priority": "high",
             "project_id": project["id"],
-            "assigned_to": assignee["id"],
+            "assigned_to": manager["id"],
         },
         {
             "title": "Gamma low",
@@ -208,10 +205,10 @@ def test_task_filters_search_sort_pagination_and_archived_project(
 
     listed = management_context.client.get(
         "/api/v1/tasks",
-        headers=assignee_headers,
+        headers=manager_headers,
         params={
             "project": project["id"],
-            "assigned_to": assignee["id"],
+            "assigned_to": manager["id"],
             "search": "NEEDLE",
             "completed": "false",
             "overdue": "true",
@@ -322,7 +319,7 @@ def test_manager_cannot_manage_tasks_in_another_project(
         headers=outsider_headers,
         json={"title": "Privilege escalation", "project_id": project["id"]},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
     task = management_context.client.post(
         "/api/v1/tasks",

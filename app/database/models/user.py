@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, String
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.database.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from app.database.models.role import Role
     from app.database.models.task import Task
     from app.database.models.user_role import UserRole
+    from app.database.models.workspace import Workspace, WorkspaceMembership
+    from app.database.models.security import SecurityEvent, SecurityToken
 
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -39,6 +42,32 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=False,
         nullable=False,
     )
+    failed_login_attempts: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        index=True,
+        nullable=True,
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    last_login_ip: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        Index("ux_users_email_lower", func.lower(email), unique=True),
+    )
+
+    @validates("email")
+    def normalize_email(self, _: str, value: str) -> str:
+        return value.strip().lower()
 
     user_roles: Mapped[list[UserRole]] = relationship(
         back_populates="user",
@@ -85,5 +114,26 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     refresh_token_sessions: Mapped[list[RefreshTokenSession]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    owned_workspace: Mapped[Workspace | None] = relationship(
+        back_populates="owner",
+        foreign_keys="Workspace.owner_id",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    workspace_memberships: Mapped[list[WorkspaceMembership]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    security_tokens: Mapped[list[SecurityToken]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    security_events: Mapped[list[SecurityEvent]] = relationship(
+        back_populates="user",
         passive_deletes=True,
     )

@@ -10,7 +10,6 @@ from app.database.models import (
     AuditEntity,
     User,
 )
-from app.database.repositories import AgentRunRepository
 from app.execution.engine import ExecutionEngine
 from app.execution.estimators import CostEstimator, ZeroPricingStrategy
 from app.execution.exceptions import InvalidTransition
@@ -27,7 +26,7 @@ from app.execution.types import (
     ToolInvocation,
 )
 from app.services.audit import record_audit
-from app.services.exceptions import ResourceNotFoundError
+from app.services.agent import RunService
 
 
 class ExecutionOrchestrator:
@@ -40,7 +39,6 @@ class ExecutionOrchestrator:
         self.session = session
         self.engine = engine
         self.retry_policy = retry_policy
-        self.runs = AgentRunRepository(session)
 
     @classmethod
     def deterministic(cls, session: AsyncSession) -> ExecutionOrchestrator:
@@ -100,9 +98,7 @@ class ExecutionOrchestrator:
         run_id: UUID,
         actor: User,
     ) -> RetryPreparation:
-        run = await self.runs.get(run_id)
-        if run is None:
-            raise ResourceNotFoundError("Run not found")
+        run = await RunService(self.session).get(run_id, actor)
         if run.status is not AgentRunStatus.FAILED:
             raise InvalidTransition("Only failed runs can prepare a retry")
         previous_attempt = run.metadata_.get("attempt_count", 1)

@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import Select, case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Task, TaskPriority, TaskStatus
+from app.database.models import Project, Task, TaskPriority, TaskStatus
 from app.database.repositories.base import AsyncRepository
 from app.database.repositories.pagination import Page, escape_like, paginate
 from app.schemas.common import SortDirection
@@ -42,6 +42,35 @@ class TaskRepository(AsyncRepository[Task]):
             select(Task).where(Task.id == task_id).with_for_update()
         )
 
+    async def get_owned(
+        self,
+        task_id: UUID,
+        owner_id: UUID,
+    ) -> Task | None:
+        return await self.session.scalar(
+            select(Task)
+            .join(Project, Task.project_id == Project.id)
+            .where(
+                Task.id == task_id,
+                Project.owner_id == owner_id,
+            )
+        )
+
+    async def get_owned_for_update(
+        self,
+        task_id: UUID,
+        owner_id: UUID,
+    ) -> Task | None:
+        return await self.session.scalar(
+            select(Task)
+            .join(Project, Task.project_id == Project.id)
+            .where(
+                Task.id == task_id,
+                Project.owner_id == owner_id,
+            )
+            .with_for_update()
+        )
+
     async def list_by_assignee(
         self,
         assignee_id: UUID,
@@ -56,12 +85,18 @@ class TaskRepository(AsyncRepository[Task]):
         filters: TaskFilters,
         *,
         now: datetime,
+        owner_id: UUID | None = None,
         limit: int,
         offset: int,
         sort_by: TaskSortField,
         direction: SortDirection,
     ) -> Page[Task]:
         statement = select(Task)
+        if owner_id is not None:
+            statement = statement.join(
+                Project,
+                Task.project_id == Project.id,
+            ).where(Project.owner_id == owner_id)
         if filters.status is not None:
             statement = statement.where(Task.status == filters.status)
         if filters.priority is not None:

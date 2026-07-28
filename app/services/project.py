@@ -14,7 +14,6 @@ from app.database.repositories import (
     Page,
     ProjectFilters,
     ProjectRepository,
-    UserRepository,
 )
 from app.schemas.common import SortDirection
 from app.schemas.project import (
@@ -32,7 +31,6 @@ from app.services.exceptions import (
 from app.services.permissions import (
     can_create_project,
     can_manage_project,
-    has_full_access,
 )
 from app.services.notification import enqueue_project_status_change
 
@@ -41,16 +39,14 @@ class ProjectService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.projects = ProjectRepository(session)
-        self.users = UserRepository(session)
 
     async def create(self, data: ProjectCreate, actor: User) -> Project:
         if not can_create_project(actor):
             raise PermissionDeniedError
 
         owner_id = data.owner_id or actor.id
-        if not has_full_access(actor) and owner_id != actor.id:
+        if owner_id != actor.id:
             raise PermissionDeniedError
-        await self._require_user(owner_id)
         if await self.projects.active_name_exists(
             owner_id=owner_id,
             name=data.name,
@@ -87,22 +83,36 @@ class ProjectService:
     async def list(
         self,
         filters: ProjectFilters,
+        actor: User,
         *,
         limit: int,
         offset: int,
         sort_by: ProjectSortField,
         direction: SortDirection,
     ) -> Page[Project]:
+        if (
+            filters.owner_id is not None
+            and filters.owner_id != actor.id
+        ) or (
+            filters.created_by is not None
+            and filters.created_by != actor.id
+        ):
+            raise PermissionDeniedError
         return await self.projects.list_filtered(
-            filters,
+            ProjectFilters(
+                status=filters.status,
+                owner_id=actor.id,
+                created_by=filters.created_by,
+                search=filters.search,
+            ),
             limit=limit,
             offset=offset,
             sort_by=sort_by,
             direction=direction,
         )
 
-    async def get(self, project_id: UUID) -> Project:
-        project = await self.projects.get(project_id)
+    async def get(self, project_id: UUID, actor: User) -> Project:
+        project = await self.projects.get_owned(project_id, actor.id)
         if project is None:
             raise ResourceNotFoundError("Project not found")
         return project
@@ -113,7 +123,7 @@ class ProjectService:
         data: ProjectUpdate,
         actor: User,
     ) -> Project:
-        project = await self._get_mutable(project_id)
+        project = await self._get_mutable(project_id, actor)
         if not can_manage_project(actor, project):
             raise PermissionDeniedError
 
@@ -124,10 +134,8 @@ class ProjectService:
         owner_id = values.get("owner_id", project.owner_id)
         if not isinstance(owner_id, UUID):
             raise ResourceConflictError("Project owner is required")
-        if owner_id != project.owner_id and not has_full_access(actor):
+        if owner_id != actor.id:
             raise PermissionDeniedError
-        if owner_id != project.owner_id:
-            await self._require_user(owner_id)
 
         name = values.get("name", project.name)
         if not isinstance(name, str):
@@ -184,7 +192,7 @@ class ProjectService:
         return project
 
     async def archive(self, project_id: UUID, actor: User) -> None:
-        project = await self._get_mutable(project_id)
+        project = await self._get_mutable(project_id, actor)
         if not can_manage_project(actor, project):
             raise PermissionDeniedError
         project.archived_at = datetime.now(timezone.utc)
@@ -199,19 +207,20 @@ class ProjectService:
         await self.session.commit()
         await dashboard_cache.invalidate()
 
-    async def _get_mutable(self, project_id: UUID) -> Project:
-        project = await self.projects.get_for_update(project_id)
+    async def _get_mutable(
+        self,
+        project_id: UUID,
+        actor: User,
+    ) -> Project:
+        project = await self.projects.get_owned_for_update(
+            project_id,
+            actor.id,
+        )
         if project is None:
             raise ResourceNotFoundError("Project not found")
         if project.archived_at is not None:
             raise ResourceConflictError("Archived projects are read-only")
         return project
-
-    async def _require_user(self, user_id: UUID) -> User:
-        user = await self.users.get_with_roles(user_id)
-        if user is None:
-            raise ResourceNotFoundError("User not found")
-        return user
 
     async def _commit_duplicate_safe(self) -> None:
         try:

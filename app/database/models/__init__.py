@@ -87,6 +87,13 @@ from app.database.models.role import Role
 from app.database.models.task import Task
 from app.database.models.user import User
 from app.database.models.user_role import UserRole
+from app.database.models.security import (
+    RateLimitBucket,
+    SecurityEvent,
+    SecurityToken,
+    SecurityTokenPurpose,
+)
+from app.database.models.workspace import Workspace, WorkspaceMembership
 
 __all__ = [
     "Base",
@@ -161,6 +168,7 @@ __all__ = [
     "Project",
     "ProjectStatus",
     "RefreshTokenSession",
+    "RateLimitBucket",
     "Pipeline",
     "PipelineStage",
     "Role",
@@ -171,4 +179,9 @@ __all__ = [
     "UUIDPrimaryKeyMixin",
     "User",
     "UserRole",
+    "SecurityEvent",
+    "SecurityToken",
+    "SecurityTokenPurpose",
+    "Workspace",
+    "WorkspaceMembership",
 ]

@@ -39,6 +39,7 @@ from app.database.models import (
 from app.database.models.base import Base
 from app.database.repositories.crm import CRMRepository
 from app.database.repositories.outreach import OutreachRepository
+from app.database.repositories.workspace import WorkspaceMembershipRepository
 from app.schemas.outreach import (
     ApprovalDecision,
     ApprovalRequest,
@@ -88,6 +89,7 @@ class OutreachService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.repository = OutreachRepository(session)
+        self.workspace_memberships = WorkspaceMembershipRepository(session)
 
     async def create_mailbox(
         self, data: MailboxCreate, actor: User
@@ -273,6 +275,16 @@ class OutreachService:
         self, draft_id: UUID, data: ApprovalRequest, actor: User
     ) -> OutreachApproval:
         draft = await self._owned(EmailDraft, draft_id, actor, for_update=True)
+        reviewer = await self.session.get(User, data.reviewer_id)
+        if reviewer is None or not can_approve_outreach(reviewer):
+            raise ResourceNotFoundError("Reviewer not found")
+        if data.reviewer_id == actor.id:
+            raise ResourceConflictError("Approval requires another reviewer")
+        if not await self.workspace_memberships.shares_workspace(
+            actor.id,
+            data.reviewer_id,
+        ):
+            raise PermissionDeniedError
         existing = await self.repository.pending_approval(draft.id)
         if existing is not None:
             if existing.status is ApprovalStatus.PENDING:
@@ -290,11 +302,6 @@ class OutreachService:
                 reviewer_id=data.reviewer_id,
             )
             self.session.add(approval)
-        reviewer = await self.session.get(User, data.reviewer_id)
-        if reviewer is None or not can_approve_outreach(reviewer):
-            raise ResourceNotFoundError("Reviewer not found")
-        if data.reviewer_id == actor.id:
-            raise ResourceConflictError("Approval requires another reviewer")
         draft.status = DraftStatus.PENDING_APPROVAL
         await self.session.flush()
         enqueue_crm_notification(
@@ -335,6 +342,14 @@ class OutreachService:
         draft = await self.session.get(EmailDraft, approval.draft_id)
         if draft is None:
             raise ResourceNotFoundError("Draft not found")
+        if (
+            draft.owner_id != approval.requested_by
+            or not await self.workspace_memberships.shares_workspace(
+                actor.id,
+                draft.owner_id,
+            )
+        ):
+            raise ResourceNotFoundError("Approval not found")
         approval.status = (
             ApprovalStatus.APPROVED if data.approved else ApprovalStatus.REJECTED
         )

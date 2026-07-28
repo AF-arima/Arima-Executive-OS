@@ -16,15 +16,10 @@ UTC = timezone.utc
 def test_project_and_task_analytics_aggregates_and_series(
     management_context: AuthTestContext,
 ) -> None:
-    _, manager_headers = prepare_user(
+    manager, manager_headers = prepare_user(
         management_context,
         "analytics-manager@example.com",
         "manager",
-    )
-    assignee, _ = prepare_user(
-        management_context,
-        "analytics-user@example.com",
-        "analyst",
     )
     project = create_project(
         management_context,
@@ -37,7 +32,7 @@ def test_project_and_task_analytics_aggregates_and_series(
         manager_headers,
         project_id=project["id"],
         title="Done",
-        assigned_to=assignee["id"],
+        assigned_to=manager["id"],
         status="completed",
         priority="high",
     )
@@ -46,7 +41,7 @@ def test_project_and_task_analytics_aggregates_and_series(
         manager_headers,
         project_id=project["id"],
         title="Late",
-        assigned_to=assignee["id"],
+        assigned_to=manager["id"],
         priority="urgent",
         due_date=now - timedelta(days=1),
     )
@@ -116,7 +111,7 @@ def test_project_and_task_analytics_aggregates_and_series(
             "start_date": start,
             "end_date": end,
             "project_id": project["id"],
-            "assigned_to": assignee["id"],
+            "assigned_to": manager["id"],
             "status": "completed",
             "priority": "high",
         },
@@ -236,15 +231,10 @@ def test_analytics_range_limits_sorting_pagination_and_visibility(
 def test_workload_formula_and_identity_scope(
     management_context: AuthTestContext,
 ) -> None:
-    _, manager_headers = prepare_user(
+    manager, manager_headers = prepare_user(
         management_context,
         "workload-manager@example.com",
         "manager",
-    )
-    analyst, _ = prepare_user(
-        management_context,
-        "workload-analyst@example.com",
-        "analyst",
     )
     _, viewer_headers = prepare_user(
         management_context,
@@ -261,7 +251,7 @@ def test_workload_formula_and_identity_scope(
         manager_headers,
         project_id=project["id"],
         title="Urgent overdue",
-        assigned_to=analyst["id"],
+        assigned_to=manager["id"],
         priority="urgent",
         due_date=datetime.now(UTC) - timedelta(days=1),
     )
@@ -276,7 +266,7 @@ def test_workload_formula_and_identity_scope(
     )
     assert response.status_code == 200
     item = response.json()["items"][0]
-    assert item["email"] == "workload-analyst@example.com"
+    assert item["email"] == "workload-manager@example.com"
     assert item["active_task_count"] == 1
     assert item["overdue_task_count"] == 1
     assert item["urgent_task_count"] == 1
