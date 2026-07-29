@@ -64,7 +64,7 @@ async def add_request_context(
     try:
         response = await call_next(request)
     except Exception:
-        logger.exception(
+        logger.error(
             "request_failed",
             extra={
                 "correlation_id": correlation_id,

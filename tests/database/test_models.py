@@ -10,6 +10,8 @@ from app.database.models import (
     Project,
     ProjectStatus,
     Role,
+    SecurityToken,
+    SecurityTokenPurpose,
     Task,
     TaskPriority,
     TaskStatus,
@@ -25,6 +27,17 @@ def make_user(email: str) -> User:
         first_name="Aryan",
         last_name="Heidari",
     )
+
+
+def test_security_token_enum_persists_values() -> None:
+    purpose_type = SecurityToken.__table__.c.purpose.type
+
+    assert purpose_type.name == "security_token_purpose"
+    assert purpose_type.enums == [
+        SecurityTokenPurpose.EMAIL_VERIFICATION.value,
+        SecurityTokenPurpose.PASSWORD_RESET.value,
+        SecurityTokenPurpose.EMAIL_CHANGE.value,
+    ]
 
 
 def test_model_creation_and_relationships() -> None:

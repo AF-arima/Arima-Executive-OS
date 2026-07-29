@@ -1,8 +1,13 @@
 import asyncio
 
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
+from app.auth.service import AuthenticationService
 from app.database.models import Workspace, WorkspaceMembership
+from app.email.service import TransactionalEmailService
+from app.schemas.auth import UserRegistration
 from tests.auth.conftest import AuthTestContext
 from tests.auth.helpers import (
     VALID_PASSWORD,
@@ -116,6 +121,37 @@ def test_duplicate_and_invalid_registration_are_rejected(
     assert invalid.status_code == 422
     assert weak.status_code == 422
     assert "weak" not in weak.text
+
+
+def test_registration_does_not_hide_unrelated_integrity_errors(
+    auth_context: AuthTestContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_token_creation(*_: object, **__: object) -> str:
+        raise IntegrityError(
+            "INSERT",
+            {},
+            RuntimeError("unrelated persistence error"),
+        )
+
+    async def exercise() -> None:
+        async with auth_context.session_factory() as session:
+            service = AuthenticationService(
+                session,
+                email_service=TransactionalEmailService(
+                    auth_context.email_provider
+                ),
+            )
+            monkeypatch.setattr(service, "_issue_security_token", fail_token_creation)
+
+            with pytest.raises(IntegrityError, match="unrelated persistence error"):
+                await service.register_user(
+                    UserRegistration(
+                        **registration_payload("persistence-error@example.com")
+                    )
+                )
+
+    asyncio.run(exercise())
 
 
 def test_login_rejects_generic_invalid_credentials_and_inactive_users(

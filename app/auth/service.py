@@ -138,7 +138,13 @@ class AuthenticationService:
             await self.session.commit()
         except IntegrityError as error:
             await self.session.rollback()
-            raise DuplicateEmailError from error
+            # A concurrent registration can still violate the unique email
+            # constraint after the pre-flight lookup.  Do not, however,
+            # misclassify an unrelated persistence failure as a duplicate
+            # email: doing so masks schema and operational errors.
+            if await self.users.get_by_email(email) is not None:
+                raise DuplicateEmailError from error
+            raise
         except EmailDeliveryError:
             await self.session.rollback()
             raise

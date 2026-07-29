@@ -94,6 +94,21 @@ def test_initial_migration_matches_metadata_and_downgrades(
         "ix_security_tokens_token_hash",
         "ix_security_tokens_user_id",
     }
+    security_token_checks = {
+        constraint["name"]: str(constraint["sqltext"])
+        for constraint in inspector.get_check_constraints("security_tokens")
+    }
+    assert set(security_token_checks) == {
+        "ck_security_tokens_security_token_purpose"
+    }
+    assert all(
+        value in security_token_checks["ck_security_tokens_security_token_purpose"]
+        for value in (
+            "email_verification",
+            "password_reset",
+            "email_change",
+        )
+    )
     assert {
         index["name"]
         for index in inspector.get_indexes("security_events")

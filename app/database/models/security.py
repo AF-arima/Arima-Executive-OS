@@ -49,8 +49,12 @@ class SecurityToken(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     purpose: Mapped[SecurityTokenPurpose] = mapped_column(
         SqlEnum(
             SecurityTokenPurpose,
+            name="security_token_purpose",
             native_enum=False,
             create_constraint=True,
+            values_callable=lambda _: [
+                purpose.value for purpose in SecurityTokenPurpose
+            ],
         ),
         index=True,
         nullable=False,
