@@ -120,10 +120,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["job_definition_id"],
             ["background_job_definitions.id"],
-            name=(
-                "fk_background_job_schedules_job_definition_id_"
-                "background_job_definitions"
-            ),
+            name="fk_bg_job_schedule_definition_id_definitions",
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
@@ -211,19 +208,13 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["job_definition_id"],
             ["background_job_definitions.id"],
-            name=(
-                "fk_background_job_executions_job_definition_id_"
-                "background_job_definitions"
-            ),
+            name="fk_bg_job_execution_definition_id_definitions",
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
             ["schedule_id"],
             ["background_job_schedules.id"],
-            name=(
-                "fk_background_job_executions_schedule_id_"
-                "background_job_schedules"
-            ),
+            name="fk_bg_job_execution_schedule_id_schedules",
             ondelete="SET NULL",
         ),
         sa.ForeignKeyConstraint(
@@ -281,10 +272,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["execution_id"],
             ["background_job_executions.id"],
-            name=(
-                "fk_background_job_attempts_execution_id_"
-                "background_job_executions"
-            ),
+            name="fk_bg_job_attempt_execution_id_executions",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_background_job_attempts"),

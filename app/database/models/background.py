@@ -83,7 +83,11 @@ class BackgroundJobSchedule(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     job_definition_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("background_job_definitions.id", ondelete="RESTRICT"),
+        ForeignKey(
+            "background_job_definitions.id",
+            name="fk_bg_job_schedule_definition_id_definitions",
+            ondelete="RESTRICT",
+        ),
         nullable=False,
     )
     job_name: Mapped[str] = mapped_column(String(150), nullable=False)
@@ -156,12 +160,20 @@ class BackgroundJobExecution(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     job_definition_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("background_job_definitions.id", ondelete="RESTRICT"),
+        ForeignKey(
+            "background_job_definitions.id",
+            name="fk_bg_job_execution_definition_id_definitions",
+            ondelete="RESTRICT",
+        ),
         nullable=False,
     )
     schedule_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("background_job_schedules.id", ondelete="SET NULL"),
+        ForeignKey(
+            "background_job_schedules.id",
+            name="fk_bg_job_execution_schedule_id_schedules",
+            ondelete="SET NULL",
+        ),
     )
     job_name: Mapped[str] = mapped_column(String(150), nullable=False)
     user_id: Mapped[UUID] = mapped_column(
@@ -230,7 +242,11 @@ class BackgroundJobAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     execution_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("background_job_executions.id", ondelete="CASCADE"),
+        ForeignKey(
+            "background_job_executions.id",
+            name="fk_bg_job_attempt_execution_id_executions",
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)

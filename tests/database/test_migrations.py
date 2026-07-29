@@ -1,3 +1,4 @@
+from io import StringIO
 from pathlib import Path
 from uuid import uuid4
 
@@ -5,7 +6,9 @@ from alembic import command
 from alembic.config import Config
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.schema import CreateTable
 
 from app.database.models import Base
 
@@ -14,6 +17,25 @@ def migration_config(database_url: str) -> Config:
     config = Config("alembic.ini")
     config.attributes["database_url"] = database_url
     return config
+
+
+def test_background_intelligence_migration_compiles_for_postgresql() -> None:
+    output_buffer = StringIO()
+    config = Config("alembic.ini", output_buffer=output_buffer)
+    config.attributes["database_url"] = (
+        "postgresql+asyncpg://postgres:postgres@localhost/arima"
+    )
+
+    command.upgrade(config, "20260726_0008", sql=True)
+
+    assert "CREATE TABLE background_job_attempts" in output_buffer.getvalue()
+
+
+def test_models_compile_for_postgresql() -> None:
+    dialect = postgresql.dialect()
+
+    for table in Base.metadata.sorted_tables:
+        str(CreateTable(table).compile(dialect=dialect))
 
 
 def test_initial_migration_matches_metadata_and_downgrades(
@@ -33,6 +55,14 @@ def test_initial_migration_matches_metadata_and_downgrades(
     assert set(inspector.get_table_names()) == expected_tables | {
         "alembic_version"
     }
+    assert {
+        "security_tokens",
+        "security_events",
+        "rate_limit_buckets",
+        "refresh_token_sessions",
+        "workspaces",
+        "workspace_memberships",
+    }.issubset(expected_tables)
     for table_name in expected_tables:
         migrated_columns = {
             column["name"]
@@ -55,6 +85,34 @@ def test_initial_migration_matches_metadata_and_downgrades(
     assert {
         index["name"] for index in inspector.get_indexes("users")
     } == {"ix_users_email", "ix_users_locked_until"}
+    assert {
+        index["name"]
+        for index in inspector.get_indexes("security_tokens")
+    } == {
+        "ix_security_tokens_expires_at",
+        "ix_security_tokens_purpose",
+        "ix_security_tokens_token_hash",
+        "ix_security_tokens_user_id",
+    }
+    assert {
+        index["name"]
+        for index in inspector.get_indexes("security_events")
+    } == {
+        "ix_security_events_event_type",
+        "ix_security_events_occurred_at",
+        "ix_security_events_user_id",
+    }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("rate_limit_buckets")
+    } == {"uq_rate_limit_buckets_scope_key_window"}
+    assert {
+        index["name"]
+        for index in inspector.get_indexes("rate_limit_buckets")
+    } == {"ix_rate_limit_buckets_scope_key_window"}
+    assert inspector.get_pk_constraint("rate_limit_buckets")["name"] == (
+        "pk_rate_limit_buckets"
+    )
     assert {
         "ix_projects_archived_at",
         "ix_projects_created_at",
