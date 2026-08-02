@@ -12,6 +12,9 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+SUPPORTED_TRANSACTIONAL_EMAIL_PROVIDERS = frozenset({"smtp"})
+LOCAL_SMTP_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
 
 class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
@@ -150,6 +153,19 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
+    @field_validator("email_provider")
+    @classmethod
+    def normalize_email_provider(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        provider = value.strip().lower()
+        if not provider:
+            return None
+        if provider not in SUPPORTED_TRANSACTIONAL_EMAIL_PROVIDERS:
+            supported = ", ".join(sorted(SUPPORTED_TRANSACTIONAL_EMAIL_PROVIDERS))
+            raise ValueError(f"EMAIL_PROVIDER must be one of: {supported}")
+        return provider
+
     @model_validator(mode="after")
     def reject_development_secret_in_production(self) -> "Settings":
         development_secret = (
@@ -208,6 +224,14 @@ class Settings(BaseSettings):
                     raise ValueError(
                         "SMTP_FROM_EMAIL (or EMAIL_FROM_ADDRESS), SMTP_HOST, "
                         "SMTP_USERNAME, and SMTP_PASSWORD must be configured "
+                        "in production"
+                    )
+                if (
+                    self.smtp_host is not None
+                    and self.smtp_host.strip().lower() in LOCAL_SMTP_HOSTS
+                ):
+                    raise ValueError(
+                        "SMTP_HOST must reference an external SMTP provider "
                         "in production"
                     )
                 if not self.email_from_name.strip():

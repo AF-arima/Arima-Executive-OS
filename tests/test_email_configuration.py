@@ -97,6 +97,32 @@ def test_production_smtp_requires_a_sender_address() -> None:
     assert settings.email_from_name == "Arima Executive OS"
 
 
+def test_email_provider_must_be_registered() -> None:
+    with pytest.raises(ValidationError, match="EMAIL_PROVIDER must be one of: smtp"):
+        Settings(_env_file=None, email_provider="unknown-provider")
+
+
+def test_production_smtp_rejects_localhost() -> None:
+    production_values = {
+        "environment": "production",
+        "jwt_secret_key": "a" * 32,
+        "security_token_secret": "b" * 32,
+        "auth_cookie_secure": True,
+        "cors_origins": ["https://frontend.example"],
+        "trusted_hosts": ["api.example"],
+        "email_provider": "smtp",
+        "smtp_host": "localhost",
+        "smtp_username": "smtp-user",
+        "smtp_password": "smtp-password",
+        "smtp_use_tls": True,
+        "smtp_use_ssl": False,
+        "SMTP_FROM_EMAIL": "sender@example.com",
+    }
+
+    with pytest.raises(ValidationError, match="SMTP_HOST must reference"):
+        Settings(_env_file=None, **production_values)
+
+
 def test_smtp_provider_uses_the_configured_sender() -> None:
     settings = Settings(
         _env_file=None,
