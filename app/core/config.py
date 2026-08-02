@@ -2,7 +2,14 @@ from functools import lru_cache
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    EmailStr,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -58,8 +65,21 @@ class Settings(BaseSettings):
     )
     email_change_token_expire_hours: int = Field(default=24, ge=1, le=168)
     email_provider: str | None = None
-    email_from_address: str | None = None
-    email_from_name: str = "Arima Executive OS"
+    email_from_address: EmailStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SMTP_FROM_EMAIL",
+            "EMAIL_FROM_ADDRESS",
+        ),
+    )
+    email_from_name: str = Field(
+        default="Arima Executive OS",
+        min_length=1,
+        validation_alias=AliasChoices(
+            "SMTP_FROM_NAME",
+            "EMAIL_FROM_NAME",
+        ),
+    )
     smtp_host: str | None = None
     smtp_port: int = Field(default=587, ge=1, le=65_535)
     smtp_username: str | None = None
@@ -114,6 +134,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     @field_validator(
@@ -185,7 +206,13 @@ class Settings(BaseSettings):
                     )
                 ):
                     raise ValueError(
-                        "SMTP email settings must be configured in production"
+                        "SMTP_FROM_EMAIL (or EMAIL_FROM_ADDRESS), SMTP_HOST, "
+                        "SMTP_USERNAME, and SMTP_PASSWORD must be configured "
+                        "in production"
+                    )
+                if not self.email_from_name.strip():
+                    raise ValueError(
+                        "SMTP_FROM_NAME (or EMAIL_FROM_NAME) must not be blank"
                     )
                 if not (self.smtp_use_tls or self.smtp_use_ssl):
                     raise ValueError(

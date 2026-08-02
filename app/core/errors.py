@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -24,6 +26,7 @@ from app.services.exceptions import (
 )
 
 BEARER_HEADERS = {"WWW-Authenticate": "Bearer"}
+logger = logging.getLogger("arima.email")
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -162,6 +165,15 @@ async def _email_delivery_handler(
     request: Request,
     error: Exception,
 ) -> JSONResponse:
+    logger.error(
+        "email_delivery_failed",
+        exc_info=error,
+        extra={
+            "correlation_id": getattr(request.state, "correlation_id", None),
+            "method": request.method,
+            "path": request.url.path,
+        },
+    )
     return _error_response(
         status.HTTP_503_SERVICE_UNAVAILABLE,
         "Email delivery is temporarily unavailable",

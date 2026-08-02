@@ -113,4 +113,4 @@ class TransactionalEmailService:
                 )
             )
         except EmailProviderError as error:
-            raise EmailDeliveryError from error
+            raise EmailDeliveryError("Transactional email delivery failed") from error
