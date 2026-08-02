@@ -1,8 +1,12 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+import pytest
+from fastapi import Response
 from sqlalchemy import select
 
+from app.api.v1.routes import auth as auth_routes
+from app.core.config import Settings
 from app.database.models import RefreshTokenSession, User, Workspace
 from tests.auth.conftest import AuthTestContext
 from tests.auth.helpers import (
@@ -108,6 +112,43 @@ def test_logout_is_idempotent_for_an_invalid_refresh_cookie(
         and "max-age=0" in value.lower()
         for value in response.headers.get_list("set-cookie")
     )
+
+
+def test_logout_cookie_deletion_matches_production_cookie_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        auth_cookie_secure=True,
+        auth_cookie_samesite="none",
+    )
+    monkeypatch.setattr(auth_routes, "get_settings", lambda: settings)
+
+    response = Response()
+    auth_routes._clear_auth_cookies(response)
+    headers = response.headers.getlist("set-cookie")
+
+    refresh = next(
+        value
+        for value in headers
+        if value.startswith(f"{settings.auth_refresh_cookie_name}=")
+    ).lower()
+    csrf = next(
+        value
+        for value in headers
+        if value.startswith(f"{settings.auth_csrf_cookie_name}=")
+    ).lower()
+
+    assert "max-age=0" in refresh
+    assert "path=/api/v1/auth" in refresh
+    assert "secure" in refresh
+    assert "httponly" in refresh
+    assert "samesite=none" in refresh
+
+    assert "max-age=0" in csrf
+    assert "path=/" in csrf
+    assert "secure" in csrf
+    assert "httponly" not in csrf
+    assert "samesite=none" in csrf
 
 
 def test_password_reset_revokes_existing_sessions(
