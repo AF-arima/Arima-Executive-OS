@@ -12,7 +12,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-SUPPORTED_TRANSACTIONAL_EMAIL_PROVIDERS = frozenset({"smtp"})
+SUPPORTED_TRANSACTIONAL_EMAIL_PROVIDERS = frozenset({"resend", "smtp"})
 LOCAL_SMTP_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     smtp_password: SecretStr | None = None
     smtp_use_tls: bool = True
     smtp_use_ssl: bool = False
+    resend_api_key: SecretStr | None = None
     database_pool_size: int = Field(default=10, ge=1, le=100)
     database_max_overflow: int = Field(default=20, ge=0, le=200)
     database_pool_recycle_seconds: int = Field(
@@ -212,7 +213,24 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "EMAIL_PROVIDER must be configured in production"
                 )
-            if self.email_provider.strip().lower() == "smtp":
+            if self.email_provider == "resend":
+                if not self.email_from_address:
+                    raise ValueError(
+                        "SMTP_FROM_EMAIL (or EMAIL_FROM_ADDRESS) must be "
+                        "configured in production"
+                    )
+                if not self.email_from_name.strip():
+                    raise ValueError(
+                        "SMTP_FROM_NAME (or EMAIL_FROM_NAME) must not be blank"
+                    )
+                if (
+                    self.resend_api_key is None
+                    or not self.resend_api_key.get_secret_value().strip()
+                ):
+                    raise ValueError(
+                        "RESEND_API_KEY must be configured in production"
+                    )
+            if self.email_provider == "smtp":
                 if not all(
                     (
                         self.email_from_address,

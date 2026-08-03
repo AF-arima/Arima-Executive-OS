@@ -2,12 +2,13 @@ from functools import lru_cache
 
 from app.auth.exceptions import EmailDeliveryError
 from app.core.config import get_settings
-from app.email.providers import SmtpEmailProvider
+from app.email.providers import ResendEmailProvider, SmtpEmailProvider
 from app.email.registry import registry
 from app.email.service import TransactionalEmailService
 
 
 def _register_default_providers() -> None:
+    registry.register("resend", lambda: ResendEmailProvider(get_settings()))
     registry.register("smtp", lambda: SmtpEmailProvider(get_settings()))
 
 
