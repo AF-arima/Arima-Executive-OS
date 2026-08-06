@@ -94,7 +94,8 @@ from app.database.models.security import (
     SecurityTokenPurpose,
 )
 from app.database.models.workspace import Workspace, WorkspaceMembership
-
+from app.database.models.market import MarketPrice
+from app.database.models.market import MarketPrice
 __all__ = [
     "Base",
     "AgentApproval",
@@ -184,4 +185,6 @@ __all__ = [
     "SecurityTokenPurpose",
     "Workspace",
     "WorkspaceMembership",
+    "MarketPrice",
+    "MarketPrice",
 ]
