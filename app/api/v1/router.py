@@ -8,6 +8,7 @@ from app.api.v1.routes import (
     auth,
     crm,
     dashboard,
+    market,
     notifications,
     outreach,
     projects,
@@ -16,6 +17,7 @@ from app.api.v1.routes import (
 )
 
 api_router = APIRouter(prefix="/api/v1")
+
 api_router.include_router(auth.router)
 api_router.include_router(admin.router)
 api_router.include_router(agents.router)
@@ -28,3 +30,4 @@ api_router.include_router(notifications.router)
 api_router.include_router(crm.router)
 api_router.include_router(outreach.router)
 api_router.include_router(voice.router)
+api_router.include_router(market.router)
