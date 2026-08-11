@@ -115,6 +115,10 @@ class ContextBuilder:
                 assigned_to=None if has_full_access(actor) else actor.id
             ),
             now=datetime.now(UTC),
+            # Assignment is not an ownership grant.  This defensive project
+            # predicate keeps inconsistent legacy/imported task rows out of
+            # the actor's AI context as well.
+            owner_id=None if has_full_access(actor) else actor.id,
             limit=25,
             offset=0,
             sort_by=TaskSortField.UPDATED_AT,

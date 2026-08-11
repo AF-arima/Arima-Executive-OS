@@ -26,6 +26,7 @@ from app.database.models.agent import (
     ToolExecutionStatus,
 )
 from app.database.models.audit_log import AuditAction, AuditEntity, AuditLog
+from app.database.models.data_feed_observation import DataFeedObservation
 from app.database.models.base import (
     Base,
     TimestampMixin,
@@ -95,7 +96,6 @@ from app.database.models.security import (
 )
 from app.database.models.workspace import Workspace, WorkspaceMembership
 from app.database.models.market import MarketPrice
-from app.database.models.market import MarketPrice
 __all__ = [
     "Base",
     "AgentApproval",
@@ -124,6 +124,7 @@ __all__ = [
     "AuditAction",
     "AuditEntity",
     "AuditLog",
+    "DataFeedObservation",
     "BackgroundJobAttempt",
     "BackgroundJobDefinition",
     "BackgroundJobEvent",
@@ -185,6 +186,5 @@ __all__ = [
     "SecurityTokenPurpose",
     "Workspace",
     "WorkspaceMembership",
-    "MarketPrice",
     "MarketPrice",
 ]

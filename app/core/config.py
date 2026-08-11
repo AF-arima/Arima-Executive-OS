@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -10,7 +10,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 SUPPORTED_TRANSACTIONAL_EMAIL_PROVIDERS = frozenset({"resend", "smtp"})
 LOCAL_SMTP_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     trusted_hosts: list[str] = Field(default_factory=lambda: ["*"])
     trusted_proxy_ips: list[str] = Field(default_factory=list)
     platform_operator_user_ids: list[UUID] = Field(default_factory=list)
+    # Founder access is an explicit, server-side email allowlist. An empty
+    # value is intentionally handled as deny-all by the dependency rather
+    # than preventing an otherwise healthy deployment from starting.
+    founder_control_emails: Annotated[list[EmailStr], NoDecode] = Field(
+        default_factory=list
+    )
     auth_cookie_domain: str | None = None
     auth_cookie_secure: bool = False
     auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
@@ -146,6 +152,7 @@ class Settings(BaseSettings):
         "trusted_hosts",
         "trusted_proxy_ips",
         "platform_operator_user_ids",
+        "founder_control_emails",
         mode="before",
     )
     @classmethod

@@ -226,14 +226,21 @@ class OutreachRepository:
             .options(selectinload(EmailDraft.attachments))
         )
 
-    async def event_exists(self, provider_event_id: str) -> bool:
-        return (
-            await self.session.scalar(
-                select(DeliveryEvent.id).where(
-                    DeliveryEvent.provider_event_id == provider_event_id
-                )
+    async def delivery_event_by_provider_id(
+        self, provider_event_id: str
+    ) -> DeliveryEvent | None:
+        """Return an event for idempotency handling after queue authorization.
+
+        ``provider_event_id`` is globally unique, but it is not an
+        authorization boundary.  Callers must validate ownership of the
+        requested queue item before using this lookup and must never return an
+        event from a different queue.
+        """
+
+        return await self.session.scalar(
+            select(DeliveryEvent).where(
+                DeliveryEvent.provider_event_id == provider_event_id
             )
-            is not None
         )
 
     async def pending_approval(self, draft_id: UUID) -> OutreachApproval | None:

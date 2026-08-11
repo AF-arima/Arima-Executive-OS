@@ -14,7 +14,10 @@ from app.auth.service import AuthenticationService
 from app.auth.tokens import JWTService
 from app.database.models import User
 from app.database.session import get_session
-from app.services.permissions import has_platform_administration
+from app.services.permissions import (
+    has_founder_control_access,
+    has_platform_administration,
+)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -52,6 +55,19 @@ async def require_platform_operator(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Platform operator access is required",
+        )
+    return current_user
+
+
+async def require_founder_control(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> User:
+    """Require a verified administrator on the server-side Founder allowlist."""
+
+    if not has_founder_control_access(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Founder access is required",
         )
     return current_user
 

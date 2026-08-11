@@ -62,6 +62,8 @@ def test_initial_migration_matches_metadata_and_downgrades(
         "refresh_token_sessions",
         "workspaces",
         "workspace_memberships",
+        "market_prices",
+        "data_feed_observations",
     }.issubset(expected_tables)
     for table_name in expected_tables:
         migrated_columns = {
@@ -155,6 +157,22 @@ def test_initial_migration_matches_metadata_and_downgrades(
         constraint["name"]
         for constraint in inspector.get_check_constraints("audit_logs")
     } == {"ck_audit_logs_audit_action", "ck_audit_logs_audit_entity"}
+    audit_entity_checks = {
+        constraint["name"]: str(constraint["sqltext"])
+        for constraint in inspector.get_check_constraints("audit_logs")
+    }
+    assert "data_feed_observation" in audit_entity_checks[
+        "ck_audit_logs_audit_entity"
+    ]
+    assert {
+        index["name"]
+        for index in inspector.get_indexes("data_feed_observations")
+    } == {
+        "ix_data_feed_observations_correlation_id",
+        "ix_data_feed_observations_entered_by_id",
+        "ix_data_feed_observations_entered_created",
+        "ix_data_feed_observations_feed_observed",
+    }
     assert {
         index["name"]
         for index in inspector.get_indexes("audit_logs")

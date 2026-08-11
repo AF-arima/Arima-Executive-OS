@@ -48,6 +48,7 @@ class AuditEntity(str, Enum):
     SEQUENCE = "sequence"
     CAMPAIGN = "campaign"
     AUTOMATION = "automation"
+    DATA_FEED_OBSERVATION = "data_feed_observation"
 
 
 class AuditLog(UUIDPrimaryKeyMixin, Base):

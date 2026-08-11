@@ -7,10 +7,12 @@ from sqlalchemy import select
 from app.database.models import (
     AuditEntity,
     AuditLog,
+    DeliveryEvent,
     EmailDraft,
     Notification,
     NotificationType,
     OutreachApproval,
+    SendQueueItem,
     WorkspaceMembership,
 )
 from app.database.repositories.workspace import WorkspaceRepository
@@ -227,3 +229,119 @@ def test_schedule_validation_and_viewer_mutation_denial(
 
     aware_time = datetime.now(UTC) + timedelta(days=1)
     assert aware_time.utcoffset() is not None
+
+
+def test_delivery_event_idempotency_does_not_cross_tenant_boundaries(
+    management_context: AuthTestContext,
+) -> None:
+    _, owner_headers = user_with_role(
+        management_context, "delivery-owner@example.com", "manager"
+    )
+    _, other_headers = user_with_role(
+        management_context, "delivery-other@example.com", "manager"
+    )
+
+    def create_scheduled_queue(headers: dict[str, str], email: str) -> str:
+        mailbox = management_context.client.post(
+            "/api/v1/outreach/mailboxes",
+            headers=headers,
+            json={
+                "provider": "smtp",
+                "email_address": email,
+                "credential_reference": f"vault://mailboxes/{email}",
+            },
+        )
+        assert mailbox.status_code == 201
+        draft = management_context.client.post(
+            "/api/v1/outreach/drafts",
+            headers=headers,
+            json={
+                "mailbox_id": mailbox.json()["id"],
+                "to_email": "recipient@example.com",
+                "subject": "Delivery event test",
+                "body_html": "<p>Delivery event test</p>",
+                "scheduled_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            },
+        )
+        assert draft.status_code == 201
+
+        async def queue_id() -> str:
+            async with management_context.session_factory() as session:
+                queue_item = await session.scalar(
+                    select(SendQueueItem).where(
+                        SendQueueItem.draft_id == UUID(str(draft.json()["id"]))
+                    )
+                )
+                assert queue_item is not None
+                return str(queue_item.id)
+
+        return asyncio.run(queue_id())
+
+    owner_queue_id = create_scheduled_queue(
+        owner_headers, "delivery-owner-mailbox@example.com"
+    )
+    other_queue_id = create_scheduled_queue(
+        other_headers, "delivery-other-mailbox@example.com"
+    )
+    provider_event_id = "provider-event-owner-only"
+    event_payload = {
+        "queue_item_id": owner_queue_id,
+        "type": "delivered",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "provider_event_id": provider_event_id,
+    }
+
+    created = management_context.client.post(
+        "/api/v1/outreach/delivery-events",
+        headers=owner_headers,
+        json=event_payload,
+    )
+    assert created.status_code == 202
+    event_id = created.json()["id"]
+
+    # The delivery provider may retry the same callback for the same queue.
+    duplicate = management_context.client.post(
+        "/api/v1/outreach/delivery-events",
+        headers=owner_headers,
+        json=event_payload,
+    )
+    assert duplicate.status_code == 202
+    assert duplicate.json() == {"id": event_id}
+
+    # Queue ownership is checked before provider-id idempotency, so a caller
+    # cannot use a known queue id and provider id to retrieve another
+    # tenant's event.
+    unauthorized_queue = management_context.client.post(
+        "/api/v1/outreach/delivery-events",
+        headers=other_headers,
+        json=event_payload,
+    )
+    assert unauthorized_queue.status_code == 404
+    assert unauthorized_queue.json()["detail"] != event_id
+
+    # A global provider id collision from another tenant's own queue must
+    # likewise not disclose the existing event identifier or turn into
+    # cross-tenant idempotency.
+    cross_tenant = management_context.client.post(
+        "/api/v1/outreach/delivery-events",
+        headers=other_headers,
+        json={**event_payload, "queue_item_id": other_queue_id},
+    )
+    assert cross_tenant.status_code == 409
+    assert cross_tenant.json() == {"detail": "Delivery event conflict"}
+
+    async def verify_owner_event_only() -> None:
+        async with management_context.session_factory() as session:
+            events = list(
+                (
+                    await session.scalars(
+                        select(DeliveryEvent).where(
+                            DeliveryEvent.provider_event_id == provider_event_id
+                        )
+                    )
+                ).all()
+            )
+            assert len(events) == 1
+            assert str(events[0].queue_item_id) == owner_queue_id
+
+    asyncio.run(verify_owner_event_only())

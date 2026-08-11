@@ -631,21 +631,25 @@ class OutreachService:
     async def record_event(
         self, data: DeliveryEventCreate, actor: User
     ) -> DeliveryEvent:
-        if await self.repository.event_exists(data.provider_event_id):
-            event = await self.session.scalar(
-                select(DeliveryEvent).where(
-                    DeliveryEvent.provider_event_id == data.provider_event_id
-                )
-            )
-            if event is None:
-                raise ResourceConflictError("Delivery event conflict")
-            return event
         queue_item = await self.session.get(SendQueueItem, data.queue_item_id)
         if queue_item is None:
             raise ResourceNotFoundError("Queue item not found")
         draft = await self._owned(EmailDraft, queue_item.draft_id, actor)
         if draft.id != queue_item.draft_id:
             raise ResourceNotFoundError("Queue item not found")
+
+        # A provider id is global for idempotency, but only the owner of this
+        # queue item may receive the corresponding event.  Authorize the queue
+        # before looking it up, and expose a generic conflict for a collision
+        # belonging to another tenant.
+        existing = await self.repository.delivery_event_by_provider_id(
+            data.provider_event_id
+        )
+        if existing is not None:
+            if existing.queue_item_id == queue_item.id:
+                return existing
+            raise ResourceConflictError("Delivery event conflict")
+
         event = DeliveryEvent(**data.model_dump())
         self.session.add(event)
         trigger = {
@@ -667,14 +671,12 @@ class OutreachService:
             await self.session.commit()
         except IntegrityError:
             await self.session.rollback()
-            existing = await self.session.scalar(
-                select(DeliveryEvent).where(
-                    DeliveryEvent.provider_event_id == data.provider_event_id
-                )
+            existing = await self.repository.delivery_event_by_provider_id(
+                data.provider_event_id
             )
-            if existing is None:
-                raise ResourceConflictError("Delivery event conflict")
-            return existing
+            if existing is not None and existing.queue_item_id == queue_item.id:
+                return existing
+            raise ResourceConflictError("Delivery event conflict")
         await self._invalidate()
         return event
 

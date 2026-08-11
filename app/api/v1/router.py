@@ -8,7 +8,6 @@ from app.api.v1.routes import (
     auth,
     crm,
     dashboard,
-    market,
     notifications,
     outreach,
     projects,
@@ -30,4 +29,3 @@ api_router.include_router(notifications.router)
 api_router.include_router(crm.router)
 api_router.include_router(outreach.router)
 api_router.include_router(voice.router)
-api_router.include_router(market.router)

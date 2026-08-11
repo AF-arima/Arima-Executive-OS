@@ -51,6 +51,24 @@ def has_platform_administration(user: User) -> bool:
     )
 
 
+def has_founder_control_access(user: User) -> bool:
+    """Return whether a verified administrator is explicitly allowlisted.
+
+    This is deliberately independent of ``PLATFORM_OPERATOR_USER_IDS``. The
+    latter governs platform role administration, while Founder Control is a
+    narrowly scoped operational surface with its own fail-closed allowlist.
+    """
+
+    allowed_emails = {
+        str(email).strip().casefold()
+        for email in get_settings().founder_control_emails
+    }
+    return bool(allowed_emails) and (
+        "administrator" in user_roles(user)
+        and user.email.strip().casefold() in allowed_emails
+    )
+
+
 def analytics_scope(user: User) -> AnalyticsScope:
     roles = user_roles(user)
     if WORKSPACE_MANAGEMENT_ROLES.intersection(roles):

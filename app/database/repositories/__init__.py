@@ -22,6 +22,9 @@ from app.database.repositories.agent import (
     AgentToolExecutionRepository,
 )
 from app.database.repositories.audit_log import AuditLogRepository
+from app.database.repositories.data_feed_observation import (
+    DataFeedObservationRepository,
+)
 from app.database.repositories.base import AsyncRepository
 from app.database.repositories.crm import (
     CRMActivityFilters,
@@ -69,6 +72,7 @@ __all__ = [
     "LeadFilters",
     "NoteFilters",
     "AuditLogRepository",
+    "DataFeedObservationRepository",
     "ActivityRepository",
     "ActivityRow",
     "AnalyticsRepository",

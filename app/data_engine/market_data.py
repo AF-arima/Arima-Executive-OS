@@ -1,4 +1,6 @@
-import yfinance as yf
+# This internal experimental module is deliberately not mounted by the API
+# until it has an authenticated provider contract and a declared dependency.
+import yfinance as yf  # type: ignore[import-untyped]
 
 
 def get_market_price(symbol: str):

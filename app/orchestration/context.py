@@ -49,6 +49,14 @@ class OrchestrationExecutionContext:
             raise OrchestrationConfigurationError(
                 "Invalid orchestration timezone"
             ) from error
+        if self.conversation.owner_id != self.user.id:
+            raise OrchestrationConfigurationError(
+                "Conversation does not belong to user"
+            )
+        if self.run.triggered_by_id != self.user.id:
+            raise OrchestrationConfigurationError(
+                "Run was not triggered by user"
+            )
         if self.run.conversation_id != self.conversation.id:
             raise OrchestrationConfigurationError(
                 "Run does not belong to conversation"
