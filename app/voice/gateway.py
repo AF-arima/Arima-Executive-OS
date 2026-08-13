@@ -129,16 +129,32 @@ class VoiceGateway:
                 {"transcript": transcript},
             )
         ]
-        command = extract_command(transcript)
-        if command is not None:
-            return await self._handle_command(
-                session,
-                command,
-                actor,
-                previous_response,
-                events,
+        try:
+            command = extract_command(transcript)
+            if command is not None:
+                return await self._handle_command(
+                    session,
+                    command,
+                    actor,
+                    previous_response,
+                    events,
+                )
+            return await self._orchestrate(
+                session, transcript, actor, events
             )
-        return await self._orchestrate(session, transcript, actor, events)
+        except Exception:
+            failed = await self.sessions.get(session_id, actor.id)
+            if failed.state not in {
+                VoiceState.ERROR,
+                VoiceState.CANCELLED,
+                VoiceState.COMPLETED,
+            }:
+                await self.sessions.update(
+                    session_id,
+                    actor.id,
+                    state=VoiceState.ERROR,
+                )
+            raise
 
     async def interrupt(
         self, session_id: UUID, actor: User

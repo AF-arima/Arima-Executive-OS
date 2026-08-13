@@ -10,8 +10,11 @@ from app.database.models import (
     AgentStatus,
     ConversationPriority,
     ConversationStatus,
+    Role,
     User,
+    UserRole,
 )
+from app.core.config import Settings
 from app.database.repositories.agent import (
     AgentConversationRepository,
     AgentDefinitionRepository,
@@ -29,6 +32,7 @@ from app.services.agent_bootstrap import (
     DEFAULT_AGENT_SLUG,
     FOUNDATION_TOOLS,
     bootstrap_agent_platform,
+    bootstrap_configured_agent_platform,
 )
 from tests.database.helpers import sqlite_session
 
@@ -147,6 +151,76 @@ def test_agent_bootstrap_is_idempotent_and_preserves_manual_tool_disable() -> No
             await memories.create(memory_values)
             with pytest.raises(ValueError, match="already exists"):
                 await memories.create(memory_values)
+
+    asyncio.run(exercise())
+
+
+def test_configured_bootstrap_requires_allowlisted_verified_admin() -> None:
+    async def exercise() -> None:
+        async with sqlite_session() as session:
+            administrator = Role(name="administrator")
+            manager = Role(name="manager")
+            founder = User(
+                email="founder@example.com",
+                hashed_password="not-used",
+                first_name="Founder",
+                last_name="Admin",
+                is_verified=True,
+            )
+            other_admin = User(
+                email="other-admin@example.com",
+                hashed_password="not-used",
+                first_name="Other",
+                last_name="Admin",
+                is_verified=True,
+            )
+            allowlisted_manager = User(
+                email="manager@example.com",
+                hashed_password="not-used",
+                first_name="Allowed",
+                last_name="Manager",
+                is_verified=True,
+            )
+            session.add_all(
+                [
+                    administrator,
+                    manager,
+                    founder,
+                    other_admin,
+                    allowlisted_manager,
+                ]
+            )
+            await session.flush()
+            session.add_all(
+                [
+                    UserRole(
+                        user_id=founder.id,
+                        role_id=administrator.id,
+                    ),
+                    UserRole(
+                        user_id=other_admin.id,
+                        role_id=administrator.id,
+                    ),
+                    UserRole(
+                        user_id=allowlisted_manager.id,
+                        role_id=manager.id,
+                    ),
+                ]
+            )
+            await session.commit()
+
+            result = await bootstrap_configured_agent_platform(
+                session,
+                settings=Settings(
+                    founder_control_emails=[
+                        "founder@example.com",
+                        "manager@example.com",
+                    ]
+                ),
+            )
+
+            assert result.agent.created_by_id == founder.id
+            assert result.agent.is_default is True
 
     asyncio.run(exercise())
 

@@ -8,6 +8,7 @@ from app.database.models import Role
 from app.orchestration.exceptions import OrchestrationApprovalRequired
 from app.orchestration.factory import OrchestrationFactory
 from app.voice.exceptions import VoicePermissionDenied
+from app.services.exceptions import ResourceNotFoundError
 from app.voice.gateway import (
     MockSpeechToTextProvider,
     MockTextToSpeechProvider,
@@ -48,11 +49,14 @@ async def build_gateway(
     database: AsyncSession,
     *,
     approval: bool = False,
+    context_error: bool = False,
 ):
     context = await make_context(database)
 
     async def context_factory(voice_session, actor, transcript):
         del voice_session, actor
+        if context_error:
+            raise ResourceNotFoundError("Default agent not found")
         return context.__class__(
             user=context.user,
             agent=context.agent,
@@ -202,5 +206,28 @@ def test_mock_browser_provider_contracts_are_deterministic() -> None:
         )
         assert stt == "Deterministic mock transcript"
         assert tts == b"Arima"
+
+    asyncio.run(scenario())
+
+
+def test_context_failure_marks_durable_session_recoverable() -> None:
+    async def scenario() -> None:
+        async with sqlite_session() as database:
+            gateway, actor, _ = await build_gateway(
+                database, context_error=True
+            )
+            session, _ = await gateway.create_session(
+                VoiceSessionCreate(), actor
+            )
+
+            with pytest.raises(
+                ResourceNotFoundError, match="Default agent not found"
+            ):
+                await gateway.handle_transcript(
+                    session.session_id, "Hello", actor
+                )
+
+            failed = await gateway.sessions.get(session.session_id, actor.id)
+            assert failed.state is VoiceState.ERROR
 
     asyncio.run(scenario())

@@ -1,8 +1,11 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
+from app.database.models import Role, User, UserRole
 from app.database.models.agent import (
     AgentDefinition,
     AgentRiskLevel,
@@ -10,6 +13,7 @@ from app.database.models.agent import (
     AgentToolDefinition,
     ToolExecutionMode,
 )
+from app.database.session import async_session_factory
 from app.database.repositories.agent import (
     AgentDefinitionRepository,
     AgentToolDefinitionRepository,
@@ -114,6 +118,45 @@ class AgentBootstrapResult:
     tools: tuple[AgentToolDefinition, ...]
 
 
+async def bootstrap_configured_agent_platform(
+    session: AsyncSession,
+    *,
+    settings: Settings | None = None,
+) -> AgentBootstrapResult:
+    """Seed the platform under an explicitly authorised founder-admin."""
+    configured = settings or get_settings()
+    founder_emails = tuple(
+        str(email).strip().lower()
+        for email in configured.founder_control_emails
+    )
+    if not founder_emails:
+        raise RuntimeError(
+            "Agent bootstrap requires a Founder Control email allowlist"
+        )
+    creator_id = await session.scalar(
+        select(User.id)
+        .join(UserRole, UserRole.user_id == User.id)
+        .join(Role, Role.id == UserRole.role_id)
+        .where(
+            func.lower(User.email).in_(founder_emails),
+            User.is_active.is_(True),
+            User.is_verified.is_(True),
+            Role.name == "administrator",
+        )
+        .order_by(User.created_at, User.id)
+        .limit(1)
+    )
+    if creator_id is None:
+        raise RuntimeError(
+            "Agent bootstrap requires an active, verified, "
+            "allowlisted administrator"
+        )
+    return await bootstrap_agent_platform(
+        session,
+        created_by_id=creator_id,
+    )
+
+
 async def bootstrap_agent_platform(
     session: AsyncSession,
     *,
@@ -181,3 +224,14 @@ async def bootstrap_agent_platform(
         agent=default_agent,
         tools=tuple(bootstrapped_tools),
     )
+
+
+async def _main() -> None:
+    async with async_session_factory() as session:
+        await bootstrap_configured_agent_platform(session)
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(_main())
