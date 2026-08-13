@@ -17,6 +17,10 @@ from app.database.session import engine
 settings = get_settings()
 logger = logging.getLogger("arima.request")
 logger.setLevel(settings.log_level)
+PRODUCTION_FRONTEND_ORIGIN = "https://aryan-portfolio.ea-arima7576.workers.dev"
+CORS_ORIGINS = list(
+    dict.fromkeys([*settings.cors_origins, PRODUCTION_FRONTEND_ORIGIN])
+)
 
 
 @asynccontextmanager
@@ -97,7 +101,7 @@ app.add_middleware(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[

@@ -3,6 +3,32 @@ from tests.management.conftest import management_context
 
 __all__ = ["management_context"]
 
+PRODUCTION_FRONTEND_ORIGIN = (
+    "https://aryan-portfolio.ea-arima7576.workers.dev"
+)
+
+
+def test_production_frontend_voice_session_preflight(
+    management_context,
+) -> None:
+    response = management_context.client.options(
+        "/api/v1/voice/sessions",
+        headers={
+            "Origin": PRODUCTION_FRONTEND_ORIGIN,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": (
+                "authorization,content-type,x-csrf-token"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == (
+        PRODUCTION_FRONTEND_ORIGIN
+    )
+    assert response.headers["access-control-allow-credentials"] == "true"
+    assert "POST" in response.headers["access-control-allow-methods"]
+
 
 def test_voice_routes_require_authentication(management_context) -> None:
     response = management_context.client.post(
