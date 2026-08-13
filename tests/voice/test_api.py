@@ -79,3 +79,34 @@ def test_voice_session_command_and_health_routes(management_context) -> None:
     )
     assert health.status_code == 200
     assert health.json()["provider_neutral"] is True
+    assert health.json()["session_store"] == "postgresql"
+
+
+def test_voice_session_ownership_is_preserved_across_requests(
+    management_context,
+) -> None:
+    register_user(management_context, "voice-owner@example.com")
+    register_user(management_context, "voice-other@example.com")
+    owner = login_user(management_context, "voice-owner@example.com")
+    other = login_user(management_context, "voice-other@example.com")
+
+    created = management_context.client.post(
+        "/api/v1/voice/sessions",
+        json={},
+        headers=bearer(owner["access_token"]),
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    denied = management_context.client.get(
+        f"/api/v1/voice/sessions/{session_id}",
+        headers=bearer(other["access_token"]),
+    )
+    assert denied.status_code == 403
+
+    fetched = management_context.client.get(
+        f"/api/v1/voice/sessions/{session_id}",
+        headers=bearer(owner["access_token"]),
+    )
+    assert fetched.status_code == 200
+    assert fetched.json()["user_id"] == created.json()["user_id"]

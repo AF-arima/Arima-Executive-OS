@@ -92,12 +92,12 @@ class VoiceGateway:
         self.enabled = enabled
         self.experience_mapper = experience_mapper or ExperienceEventMapper()
 
-    def create_session(
+    async def create_session(
         self,
         data: VoiceSessionCreate,
         actor: User,
     ) -> tuple[VoiceSession, list[VoiceEvent]]:
-        session = self.sessions.create(data, actor.id)
+        session = await self.sessions.create(data, actor.id)
         return session, [
             self._event(
                 VoiceEventType.SESSION_STARTED,
@@ -113,9 +113,9 @@ class VoiceGateway:
         transcript: str,
         actor: User,
     ) -> VoiceGatewayResponse:
-        session = self.sessions.get(session_id, actor.id)
+        session = await self.sessions.get(session_id, actor.id)
         previous_response = session.response_text
-        session = self.sessions.update(
+        session = await self.sessions.update(
             session_id,
             actor.id,
             state=VoiceState.PROCESSING,
@@ -131,7 +131,7 @@ class VoiceGateway:
         ]
         command = extract_command(transcript)
         if command is not None:
-            return self._handle_command(
+            return await self._handle_command(
                 session,
                 command,
                 actor,
@@ -140,9 +140,11 @@ class VoiceGateway:
             )
         return await self._orchestrate(session, transcript, actor, events)
 
-    def interrupt(self, session_id: UUID, actor: User) -> VoiceGatewayResponse:
-        session = self.sessions.get(session_id, actor.id)
-        session = self.sessions.update(
+    async def interrupt(
+        self, session_id: UUID, actor: User
+    ) -> VoiceGatewayResponse:
+        session = await self.sessions.get(session_id, actor.id)
+        session = await self.sessions.update(
             session_id, actor.id, state=VoiceState.INTERRUPTED
         )
         events = [
@@ -159,11 +161,13 @@ class VoiceGateway:
             events,
         )
 
-    def cancel(self, session_id: UUID, actor: User) -> VoiceGatewayResponse:
-        session = self.sessions.get(session_id, actor.id)
+    async def cancel(
+        self, session_id: UUID, actor: User
+    ) -> VoiceGatewayResponse:
+        session = await self.sessions.get(session_id, actor.id)
         if session.state is VoiceState.CANCELLED:
             return self._response(session, "Voice session cancelled.", [])
-        session = self.sessions.update(
+        session = await self.sessions.update(
             session_id, actor.id, state=VoiceState.CANCELLED
         )
         events = [
@@ -194,7 +198,7 @@ class VoiceGateway:
             orchestration_available=available,
         )
 
-    def _handle_command(
+    async def _handle_command(
         self,
         session: VoiceSession,
         command: VoiceCommand,
@@ -213,20 +217,20 @@ class VoiceGateway:
             )
         action = resolve_command(command)
         if name is VoiceCommandName.CANCEL:
-            return self.cancel(session.session_id, actor)
+            return await self.cancel(session.session_id, actor)
         if name is VoiceCommandName.STOP_SPEAKING:
-            session = self.sessions.update(
+            session = await self.sessions.update(
                 session.session_id,
                 actor.id,
                 state=VoiceState.SPEAKING,
             )
-            return self.interrupt(session.session_id, actor)
+            return await self.interrupt(session.session_id, actor)
         response = (
             previous_response
             if name is VoiceCommandName.REPEAT and previous_response
             else action.response
         )
-        session = self.sessions.update(
+        session = await self.sessions.update(
             session.session_id,
             actor.id,
             state=VoiceState.SPEAKING,
@@ -246,7 +250,7 @@ class VoiceGateway:
                 {"text": response},
             )
         )
-        session = self.sessions.update(
+        session = await self.sessions.update(
             session.session_id,
             actor.id,
             state=VoiceState.COMPLETED,
@@ -273,7 +277,7 @@ class VoiceGateway:
         actor: User,
         events: list[VoiceEvent],
     ) -> VoiceGatewayResponse:
-        session = self.sessions.update(
+        session = await self.sessions.update(
             session.session_id,
             actor.id,
             state=VoiceState.THINKING,
@@ -286,7 +290,7 @@ class VoiceGateway:
             )
         )
         context = await self.context_factory(session, actor, transcript)
-        session = self.sessions.update(
+        session = await self.sessions.update(
             session.session_id,
             actor.id,
             conversation_id=context.conversation.id,
@@ -296,7 +300,7 @@ class VoiceGateway:
         try:
             result = await self.orchestration.execute(context)
         except OrchestrationApprovalRequired:
-            session = self.sessions.update(
+            session = await self.sessions.update(
                 session.session_id,
                 actor.id,
                 state=VoiceState.AWAITING_APPROVAL,
@@ -327,7 +331,7 @@ class VoiceGateway:
             + result.executed_jobs
         )
         if actions:
-            session = self.sessions.update(
+            session = await self.sessions.update(
                 session.session_id,
                 actor.id,
                 state=VoiceState.TOOL_EXECUTION,
@@ -372,7 +376,7 @@ class VoiceGateway:
                     {"text": response},
                 )
             )
-        session = self.sessions.update(
+        session = await self.sessions.update(
             session.session_id,
             actor.id,
             state=VoiceState.SPEAKING,
@@ -386,7 +390,7 @@ class VoiceGateway:
                 {"text": response},
             )
         )
-        session = self.sessions.update(
+        session = await self.sessions.update(
             session.session_id,
             actor.id,
             state=VoiceState.COMPLETED,

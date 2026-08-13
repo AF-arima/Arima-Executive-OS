@@ -53,7 +53,7 @@ async def create_voice_session(
     actor: VoiceUser,
 ) -> VoiceSession:
     voice_gateway = gateway(database)
-    voice_session, _ = voice_gateway.create_session(data, actor)
+    voice_session, _ = await voice_gateway.create_session(data, actor)
     return voice_session
 
 
@@ -65,7 +65,7 @@ async def get_voice_session(
 ) -> VoiceSession:
     voice_gateway = gateway(database)
     try:
-        return voice_gateway.sessions.get(session_id, actor.id)
+        return await voice_gateway.sessions.get(session_id, actor.id)
     except VoiceSessionNotFound as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except VoiceSessionAccessDenied as error:
@@ -110,7 +110,7 @@ async def interrupt_voice_session(
     database: SessionDependency,
     actor: VoiceUser,
 ) -> VoiceGatewayResponse:
-    return gateway(database).interrupt(session_id, actor)
+    return await gateway(database).interrupt(session_id, actor)
 
 
 @router.post(
@@ -122,7 +122,7 @@ async def cancel_voice_session(
     database: SessionDependency,
     actor: VoiceUser,
 ) -> VoiceGatewayResponse:
-    return gateway(database).cancel(session_id, actor)
+    return await gateway(database).cancel(session_id, actor)
 
 
 @router.get("/health", response_model=VoiceHealth)

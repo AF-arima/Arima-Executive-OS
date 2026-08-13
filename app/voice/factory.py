@@ -21,9 +21,6 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "viewer": frozenset({"read"}),
 }
 
-_SESSION_STORE = VoiceSessionStore()
-
-
 class VoiceOrchestrationContextFactory:
     def __init__(self, database: AsyncSession) -> None:
         self.database = database
@@ -101,7 +98,7 @@ class VoiceGatewayFactory:
         enabled: bool = True,
     ) -> None:
         self.database = database
-        self.sessions = sessions or _SESSION_STORE
+        self.sessions = sessions or VoiceSessionStore(database)
         self.enabled = enabled
 
     def create(self) -> VoiceGateway:

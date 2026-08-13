@@ -106,6 +106,6 @@ class VoiceHealth(VoiceSchema):
     status: str
     enabled: bool
     provider_neutral: bool = True
-    session_store: str = "in_memory"
+    session_store: str = "postgresql"
     orchestration_available: bool
     checked_at: datetime

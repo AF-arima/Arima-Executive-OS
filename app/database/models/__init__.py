@@ -95,6 +95,7 @@ from app.database.models.security import (
     SecurityTokenPurpose,
 )
 from app.database.models.workspace import Workspace, WorkspaceMembership
+from app.database.models.voice import VoiceSessionRecord
 from app.database.models.market import MarketPrice
 __all__ = [
     "Base",
@@ -186,5 +187,6 @@ __all__ = [
     "SecurityTokenPurpose",
     "Workspace",
     "WorkspaceMembership",
+    "VoiceSessionRecord",
     "MarketPrice",
 ]

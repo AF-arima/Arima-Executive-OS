@@ -8,7 +8,7 @@ approval requests.
 
 ## Architecture
 
-- `VoiceSessionStore` holds short-lived MVP session state in process memory.
+- `VoiceSessionStore` durably persists session state in PostgreSQL.
 - `VoiceGateway` validates session ownership and state transitions, resolves
   deterministic UI commands, and delegates every unknown request to
   `OrchestrationEngine.execute()`.

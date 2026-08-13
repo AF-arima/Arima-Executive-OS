@@ -71,7 +71,7 @@ async def build_gateway(
         if approval
         else CountingEngine(OrchestrationFactory(database).create())
     )
-    store = VoiceSessionStore(clock=lambda: NOW)
+    store = VoiceSessionStore(database, clock=lambda: NOW)
     gateway = VoiceGateway(
         sessions=store,
         orchestration=engine,
@@ -84,7 +84,7 @@ def test_session_creation_and_navigation_command() -> None:
     async def scenario() -> None:
         async with sqlite_session() as database:
             gateway, actor, engine = await build_gateway(database)
-            session, events = gateway.create_session(
+            session, events = await gateway.create_session(
                 VoiceSessionCreate(), actor
             )
             assert session.state is VoiceState.IDLE
@@ -108,7 +108,9 @@ def test_unknown_request_delegates_to_orchestration() -> None:
     async def scenario() -> None:
         async with sqlite_session() as database:
             gateway, actor, engine = await build_gateway(database)
-            session, _ = gateway.create_session(VoiceSessionCreate(), actor)
+            session, _ = await gateway.create_session(
+                VoiceSessionCreate(), actor
+            )
             response = await gateway.handle_transcript(
                 session.session_id,
                 "Analyse this strategic decision",
@@ -132,7 +134,9 @@ def test_panel_interrupt_cancel_and_repeat() -> None:
     async def scenario() -> None:
         async with sqlite_session() as database:
             gateway, actor, _ = await build_gateway(database)
-            session, _ = gateway.create_session(VoiceSessionCreate(), actor)
+            session, _ = await gateway.create_session(
+                VoiceSessionCreate(), actor
+            )
             briefing = await gateway.handle_transcript(
                 session.session_id, "Show today's briefing", actor
             )
@@ -141,9 +145,9 @@ def test_panel_interrupt_cancel_and_repeat() -> None:
                 session.session_id, "Say that again", actor
             )
             assert repeated.response_text == briefing.response_text
-            interrupted = gateway.interrupt(session.session_id, actor)
+            interrupted = await gateway.interrupt(session.session_id, actor)
             assert interrupted.state is VoiceState.INTERRUPTED
-            cancelled = gateway.cancel(session.session_id, actor)
+            cancelled = await gateway.cancel(session.session_id, actor)
             assert cancelled.state is VoiceState.CANCELLED
 
     asyncio.run(scenario())
@@ -154,7 +158,9 @@ def test_growth_requires_authorised_role() -> None:
         async with sqlite_session() as database:
             gateway, actor, _ = await build_gateway(database)
             actor.roles = [Role(name="analyst", description=None)]
-            session, _ = gateway.create_session(VoiceSessionCreate(), actor)
+            session, _ = await gateway.create_session(
+                VoiceSessionCreate(), actor
+            )
             with pytest.raises(VoicePermissionDenied):
                 await gateway.handle_transcript(
                     session.session_id,
@@ -171,7 +177,9 @@ def test_approval_response_and_health() -> None:
             gateway, actor, _ = await build_gateway(
                 database, approval=True
             )
-            session, _ = gateway.create_session(VoiceSessionCreate(), actor)
+            session, _ = await gateway.create_session(
+                VoiceSessionCreate(), actor
+            )
             response = await gateway.handle_transcript(
                 session.session_id, "Execute sensitive operation", actor
             )
