@@ -64,6 +64,7 @@ def test_initial_migration_matches_metadata_and_downgrades(
         "workspace_memberships",
         "market_prices",
         "data_feed_observations",
+        "market_provider_verifications",
         "voice_sessions",
     }.issubset(expected_tables)
     for table_name in expected_tables:

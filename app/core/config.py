@@ -107,6 +107,55 @@ class Settings(BaseSettings):
         ge=1,
         le=3600,
     )
+    market_data_provider: Literal["twelve_data"] = "twelve_data"
+    market_data_source: Literal["twelve_data"] = "twelve_data"
+    market_data_account_plan: Literal[
+        "basic",
+        "grow",
+        "pro",
+        "ultra",
+        "venture",
+        "enterprise",
+        "custom",
+    ] = "basic"
+    market_data_usage_scope: Literal[
+        "internal_non_display",
+        "customer_display",
+        "redistribution",
+    ] = "internal_non_display"
+    market_data_customer_display_entitled: bool = False
+    market_data_redistribution_entitled: bool = False
+    market_data_real_time_entitled: bool = False
+    market_data_entitlement_reference: SecretStr | None = None
+    twelve_data_api_key: SecretStr | None = None
+    twelve_data_base_url: str = "https://api.twelvedata.com"
+    market_data_xauusd_symbol: str = Field(
+        default="XAU/USD", min_length=3, max_length=50
+    )
+    market_data_btcusd_symbol: str = Field(
+        default="BTC/USD", min_length=3, max_length=50
+    )
+    market_data_xauusd_exchange: str = Field(
+        default="Commodity", min_length=1, max_length=50
+    )
+    market_data_btcusd_exchange: str = Field(
+        default="Coinbase Pro", min_length=1, max_length=50
+    )
+    market_data_spx_symbol: str = Field(
+        default="SPX", min_length=1, max_length=50
+    )
+    market_data_spx_exchange: str = Field(
+        default="CBOE", min_length=1, max_length=50
+    )
+    market_data_stale_after_seconds: int = Field(
+        default=120, ge=1, le=86_400
+    )
+    market_data_timeout_seconds: float = Field(
+        default=5.0, ge=0.1, le=30.0
+    )
+    market_data_rate_limit_per_minute: int = Field(
+        default=8, ge=4, le=10_000
+    )
     openai_api_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = None
     nvidia_api_key: SecretStr | None = None

@@ -97,6 +97,7 @@ from app.database.models.security import (
 from app.database.models.workspace import Workspace, WorkspaceMembership
 from app.database.models.voice import VoiceSessionRecord
 from app.database.models.market import MarketPrice
+from app.database.models.market_verification import MarketProviderVerification
 __all__ = [
     "Base",
     "AgentApproval",
@@ -189,4 +190,5 @@ __all__ = [
     "WorkspaceMembership",
     "VoiceSessionRecord",
     "MarketPrice",
+    "MarketProviderVerification",
 ]
