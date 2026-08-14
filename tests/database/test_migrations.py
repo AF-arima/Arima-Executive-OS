@@ -66,6 +66,14 @@ def test_initial_migration_matches_metadata_and_downgrades(
         "data_feed_observations",
         "market_provider_verifications",
         "voice_sessions",
+        "workspace_agent_grants",
+        "ai_workspace_runs",
+        "knowledge_sources",
+        "knowledge_documents",
+        "knowledge_chunks",
+        "ai_retrieved_contexts",
+        "telegram_identities",
+        "telegram_messages",
     }.issubset(expected_tables)
     for table_name in expected_tables:
         migrated_columns = {

@@ -188,6 +188,11 @@ class Settings(BaseSettings):
     arima_voice_session_timeout_seconds: int = Field(
         default=1_800, ge=60, le=86_400
     )
+    telegram_enabled: bool = False
+    telegram_bot_token: SecretStr | None = Field(default=None, min_length=1)
+    telegram_webhook_secret: SecretStr | None = Field(
+        default=None, min_length=32, max_length=256
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -252,6 +257,19 @@ class Settings(BaseSettings):
             )
         if self.smtp_use_ssl and self.smtp_use_tls:
             raise ValueError("SMTP_USE_SSL and SMTP_USE_TLS cannot both be enabled")
+        if self.telegram_enabled:
+            telegram_secrets = (
+                self.telegram_bot_token,
+                self.telegram_webhook_secret,
+            )
+            if any(
+                secret is None or not secret.get_secret_value().strip()
+                for secret in telegram_secrets
+            ):
+                raise ValueError(
+                    "Telegram transport requires server-side bot and "
+                    "webhook credentials"
+                )
         if self.environment == "production":
             if not self.auth_cookie_secure:
                 raise ValueError(

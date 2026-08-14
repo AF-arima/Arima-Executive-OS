@@ -98,6 +98,19 @@ from app.database.models.workspace import Workspace, WorkspaceMembership
 from app.database.models.voice import VoiceSessionRecord
 from app.database.models.market import MarketPrice
 from app.database.models.market_verification import MarketProviderVerification
+from app.database.models.intelligence import (
+    AIRetrievedContext,
+    AIWorkspaceRun,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeDocumentStatus,
+    KnowledgeSource,
+    TelegramIdentity,
+    TelegramIdentityStatus,
+    TelegramMessage,
+    TelegramProcessingStatus,
+    WorkspaceAgentGrant,
+)
 __all__ = [
     "Base",
     "AgentApproval",
@@ -191,4 +204,15 @@ __all__ = [
     "VoiceSessionRecord",
     "MarketPrice",
     "MarketProviderVerification",
+    "AIRetrievedContext",
+    "AIWorkspaceRun",
+    "KnowledgeChunk",
+    "KnowledgeDocument",
+    "KnowledgeDocumentStatus",
+    "KnowledgeSource",
+    "TelegramIdentity",
+    "TelegramIdentityStatus",
+    "TelegramMessage",
+    "TelegramProcessingStatus",
+    "WorkspaceAgentGrant",
 ]
