@@ -69,7 +69,9 @@ def test_factory_defaults_explicit_stubs_registry_and_model_validation() -> None
         capabilities=frozenset({ProviderCapability.REASONING})
     )
     assert [provider.provider for provider in matches] == [
-        ProviderName.MOCK
+        ProviderName.MOCK,
+        ProviderName.NVIDIA,
+        ProviderName.OPENAI,
     ]
 
     with pytest.raises(InvalidModel):

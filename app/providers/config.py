@@ -72,6 +72,10 @@ class ProviderPlatformConfig:
             ProviderName.OPENAI: build(
                 ProviderName.OPENAI,
                 api_key=settings.openai_api_key,
+                capabilities=ProviderCapabilities(
+                    streaming=True,
+                    reasoning=True,
+                ),
             ),
             ProviderName.ANTHROPIC: build(
                 ProviderName.ANTHROPIC,
@@ -80,6 +84,10 @@ class ProviderPlatformConfig:
             ProviderName.NVIDIA: build(
                 ProviderName.NVIDIA,
                 api_key=settings.nvidia_api_key,
+                capabilities=ProviderCapabilities(
+                    streaming=True,
+                    reasoning=True,
+                ),
             ),
             ProviderName.OLLAMA: build(
                 ProviderName.OLLAMA,

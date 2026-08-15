@@ -1,15 +1,40 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import User
+from app.database.models import AgentRunStatus, MessageRole, User
+from app.intelligence.access import (
+    AgentGrantService,
+    IntelligenceAccessError,
+    RunBindingService,
+    require_workspace_membership,
+)
+from app.intelligence.retrieval import TenantSafeRetrievalService
+from app.intelligence.schemas import RetrievalQuery, RetrievedKnowledge
 from app.orchestration.context import OrchestrationExecutionContext
 from app.orchestration.factory import OrchestrationFactory
 from app.orchestration.schemas import OrchestrationRequest
-from app.schemas.agent import ConversationCreateRequest, RunCreateRequest
-from app.services.agent import AgentService, ConversationService, RunService
+from app.schemas.agent import (
+    MessageCreateRequest,
+    RunCreateRequest,
+    RunTransitionRequest,
+)
+from app.services.agent import (
+    AgentService,
+    ConversationService,
+    MessageService,
+    RunService,
+)
+from app.services.exceptions import (
+    PermissionDeniedError,
+    ResourceNotFoundError,
+)
 from app.services.permissions import user_roles
 from app.voice.gateway import VoiceGateway
+from app.voice.exceptions import VoicePermissionDenied
+from app.voice.orchestration import DurableVoiceOrchestration
 from app.voice.schemas import VoiceSession
 from app.voice.session import VoiceSessionStore
 
@@ -34,29 +59,54 @@ class VoiceOrchestrationContextFactory:
         agents = AgentService(self.database)
         conversations = ConversationService(self.database)
         if voice_session.conversation_id is None:
-            agent = await agents.get_default()
-            conversation = await conversations.create(
-                ConversationCreateRequest(
-                    agent_id=agent.id,
-                    title="Arima voice session",
-                    owner_id=actor.id,
-                    metadata={
-                        "channel": "voice",
-                        "voice_session_id": str(voice_session.session_id),
-                    },
-                ),
-                actor,
+            raise VoicePermissionDenied(
+                "An authorized existing conversation is required for Voice AI"
             )
-        else:
+        try:
             conversation = await conversations.get(
                 voice_session.conversation_id, actor
             )
             agent = await agents.get(conversation.agent_id)
-        run = await RunService(self.database).create(
+            workspace_id = UUID(str(conversation.metadata_["workspace_id"]))
+            await require_workspace_membership(
+                self.database, actor, workspace_id
+            )
+            await AgentGrantService(self.database).require(
+                workspace_id=workspace_id,
+                agent_id=agent.id,
+            )
+        except (
+            IntelligenceAccessError,
+            KeyError,
+            PermissionDeniedError,
+            ResourceNotFoundError,
+            ValueError,
+        ) as error:
+            raise VoicePermissionDenied(
+                "Voice AI authorization denied"
+            ) from error
+        input_message = await MessageService(
+            self.database
+        ).create_user_message(
+            MessageCreateRequest(
+                conversation_id=conversation.id,
+                role=MessageRole.USER,
+                content=transcript,
+                metadata={
+                    "channel": "voice",
+                    "voice_session_id": str(voice_session.session_id),
+                },
+            ),
+            actor,
+        )
+        runs = RunService(self.database)
+        run = await runs.create(
             RunCreateRequest(
                 conversation_id=conversation.id,
+                input_message_id=input_message.id,
                 context_snapshot={
                     "channel": "voice",
+                    "workspace_id": str(workspace_id),
                     "locale": voice_session.locale,
                     "timezone": voice_session.timezone,
                 },
@@ -66,6 +116,37 @@ class VoiceOrchestrationContextFactory:
             ),
             actor,
         )
+        binding = await RunBindingService(self.database).bind(
+            workspace_id=workspace_id,
+            run=run,
+            actor=actor,
+            channel="voice",
+            correlation_id=voice_session.correlation_id,
+        )
+        run = await runs.start(run.id, actor)
+        try:
+            evidence = await TenantSafeRetrievalService(
+                self.database
+            ).retrieve(
+                workspace_id=workspace_id,
+                run_id=run.id,
+                actor=actor,
+                query=RetrievalQuery(text=transcript),
+            )
+        except Exception as error:
+            await runs.fail(
+                run.id,
+                RunTransitionRequest(
+                    status=AgentRunStatus.FAILED,
+                    failure_code="voice_retrieval_failed",
+                    failure_message=(
+                        f"Voice retrieval failed ({type(error).__name__})"
+                    ),
+                ),
+                actor,
+            )
+            raise
+        content = self._context_text(transcript, evidence)
         permissions: set[str] = set()
         for role in user_roles(actor):
             permissions.update(ROLE_PERMISSIONS.get(role, ()))
@@ -75,17 +156,37 @@ class VoiceOrchestrationContextFactory:
             conversation=conversation,
             run=run,
             request=OrchestrationRequest(
-                content=transcript,
+                content=content,
                 stream=True,
                 metadata={
                     "channel": "browser_voice",
+                    "workspace_id": str(workspace_id),
                     "voice_session_id": str(voice_session.session_id),
+                    "evidence_ids": [
+                        str(item.evidence_id) for item in evidence
+                    ],
                 },
             ),
             permissions=frozenset(permissions),
-            correlation_id=voice_session.correlation_id,
+            correlation_id=binding.correlation_id,
             timezone=voice_session.timezone,
             locale=voice_session.locale,
+        )
+
+    @staticmethod
+    def _context_text(
+        transcript: str,
+        evidence: tuple[RetrievedKnowledge, ...],
+    ) -> str:
+        if not evidence:
+            return transcript
+        rendered = "\n\n".join(
+            f"[evidence:{item.evidence_id}] {item.content}"
+            for item in evidence
+        )
+        return (
+            f"{transcript}\n\nApproved workspace context follows. Cite "
+            f"evidence IDs for factual claims:\n{rendered}"
         )
 
 
@@ -102,9 +203,12 @@ class VoiceGatewayFactory:
         self.enabled = enabled
 
     def create(self) -> VoiceGateway:
+        orchestration = OrchestrationFactory(self.database).create()
         return VoiceGateway(
             sessions=self.sessions,
-            orchestration=OrchestrationFactory(self.database).create(),
+            orchestration=DurableVoiceOrchestration(
+                self.database, orchestration
+            ),
             context_factory=VoiceOrchestrationContextFactory(self.database),
             enabled=self.enabled,
         )

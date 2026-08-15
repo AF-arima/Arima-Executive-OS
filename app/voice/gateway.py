@@ -9,7 +9,6 @@ from uuid import UUID
 from app.database.models import User
 from app.experience.mapper import ExperienceEventMapper
 from app.orchestration.context import OrchestrationExecutionContext
-from app.orchestration.engine import OrchestrationEngine
 from app.orchestration.exceptions import OrchestrationApprovalRequired
 from app.orchestration.schemas import OrchestrationResult
 from app.services.permissions import user_roles
@@ -72,6 +71,15 @@ class ContextFactory(Protocol):
     ) -> OrchestrationExecutionContext: ...
 
 
+class VoiceOrchestration(Protocol):
+    async def execute(
+        self,
+        context: OrchestrationExecutionContext,
+    ) -> OrchestrationResult: ...
+
+    async def health(self) -> object: ...
+
+
 HealthCheck = Callable[[], Awaitable[object]]
 GROWTH_ROLES = frozenset({"administrator", "executive", "manager"})
 
@@ -81,7 +89,7 @@ class VoiceGateway:
         self,
         *,
         sessions: VoiceSessionStore,
-        orchestration: OrchestrationEngine,
+        orchestration: VoiceOrchestration,
         context_factory: ContextFactory,
         enabled: bool = True,
         experience_mapper: ExperienceEventMapper | None = None,

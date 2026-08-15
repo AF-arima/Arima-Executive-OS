@@ -39,6 +39,7 @@ class VoiceSessionStore:
         now = self.clock()
         session = VoiceSession(
             user_id=user_id,
+            conversation_id=data.conversation_id,
             language=data.language,
             locale=data.locale,
             timezone=data.timezone,

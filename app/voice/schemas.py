@@ -16,6 +16,7 @@ class VoiceSchema(BaseModel):
 
 
 class VoiceSessionCreate(VoiceSchema):
+    conversation_id: UUID | None = None
     language: str = Field(default="en", min_length=2, max_length=20)
     locale: str = Field(default="en-GB", min_length=2, max_length=35)
     timezone: str = Field(default="Europe/London", min_length=1, max_length=100)
