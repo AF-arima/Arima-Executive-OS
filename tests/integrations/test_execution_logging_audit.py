@@ -57,7 +57,10 @@ def test_execution_dry_run_batch_logging_and_audit() -> None:
                 context,
             )
             assert invalid.success is False
-            assert invalid.failure is not None
+            assert invalid.failure == (
+                "Integration validation failed (IntegrationValidationError)"
+            )
+            assert "unsupported_operation" not in invalid.failure
             batch = await service.execute_batch(
                 [
                     IntegrationRequest(

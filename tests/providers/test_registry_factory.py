@@ -63,7 +63,7 @@ def test_factory_defaults_explicit_stubs_registry_and_model_validation() -> None
     assert health.status is ProviderStatus.UNAVAILABLE
     assert health.available is False
 
-    registry = factory.build_registry()
+    registry = factory.build_registry(tuple(ProviderName))
     assert len(registry.list()) == len(ProviderName)
     matches = registry.find(
         capabilities=frozenset({ProviderCapability.REASONING})

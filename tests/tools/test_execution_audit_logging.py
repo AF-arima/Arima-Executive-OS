@@ -58,6 +58,19 @@ def test_execution_is_structured_audited_and_logged() -> None:
             assert batch.execution_mode == "parallel_abstraction"
             assert len(batch.results) == 2
 
+            failed = await service.execute(
+                ToolExecutionRequest(
+                    tool_name="memory.store",
+                    payload={"key": "", "value": "private-tool-value"},
+                ),
+                context,
+            )
+            assert failed.success is False
+            assert failed.failure == (
+                "Tool execution failed (ToolValidationError)"
+            )
+            assert "private-tool-value" not in failed.failure
+
     asyncio.run(scenario())
 
 

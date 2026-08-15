@@ -81,7 +81,9 @@ class ProviderFactory:
         self,
         providers: tuple[ProviderName, ...] | None = None,
     ) -> ProviderRegistry:
-        selected = providers or tuple(ProviderName)
+        if not self.settings.ai_execution_enabled:
+            return self.registry
+        selected = providers or (self.config.default_provider,)
         for provider in selected:
             self.create_and_register(provider=provider, replace=True)
         return self.registry

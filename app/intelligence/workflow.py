@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import logging
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +48,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "manager": frozenset({"read", "write", "audit"}),
     "analyst": frozenset({"read", "write"}),
 }
+logger = logging.getLogger("arima.ai")
 
 
 def _safe_failure_detail(error: Exception) -> str:
@@ -172,6 +174,15 @@ class ExecutiveWorkflowService:
                 actor,
             )
         except Exception as error:
+            logger.error(
+                "ai_run_failed",
+                extra={
+                    "workspace_id": str(workspace_id),
+                    "run_id": str(run.id),
+                    "correlation_id": str(binding.correlation_id),
+                    "error_type": type(error).__name__,
+                },
+            )
             await run_service.fail(
                 run.id,
                 RunTransitionRequest(

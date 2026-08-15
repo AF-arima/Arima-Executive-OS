@@ -14,6 +14,7 @@ from app.database.models import (
     ToolExecutionStatus,
     User,
 )
+from app.core.redaction import safe_failure_detail
 from app.database.repositories import (
     AgentApprovalRepository,
     AgentConversationRepository,
@@ -389,7 +390,9 @@ class ExecutionEngine:
             RunTransitionRequest(
                 status=AgentRunStatus.FAILED,
                 failure_code=type(error).__name__,
-                failure_message=str(error),
+                failure_message=safe_failure_detail(
+                    "Agent execution failed", error
+                ),
             ),
             actor,
         )

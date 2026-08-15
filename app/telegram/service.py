@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 import hmac
+import logging
 from uuid import UUID
 
 from pydantic import SecretStr
@@ -35,6 +36,7 @@ class TelegramAuthenticationError(PermissionError):
 
 
 WorkflowHandler = Callable[[UUID, User, str, UUID], Awaitable[GovernedWorkflowResult]]
+logger = logging.getLogger("arima.telegram")
 
 
 def _now() -> datetime:
@@ -210,6 +212,18 @@ class TelegramTransportService:
                 user=user,
             )
         except Exception as error:
+            logger.warning(
+                "telegram_processing_failed",
+                extra={
+                    "telegram_message_id": str(message.id),
+                    "workspace_id": (
+                        str(message.workspace_id)
+                        if message.workspace_id is not None
+                        else None
+                    ),
+                    "error_type": type(error).__name__,
+                },
+            )
             await self._fail(
                 message,
                 code="telegram_processing_failed",

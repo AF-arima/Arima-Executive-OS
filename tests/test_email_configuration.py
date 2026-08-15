@@ -76,6 +76,7 @@ def test_production_smtp_requires_a_sender_address() -> None:
         "environment": "production",
         "jwt_secret_key": "a" * 32,
         "security_token_secret": "b" * 32,
+        "frontend_url": "https://frontend.example",
         "auth_cookie_secure": True,
         "cors_origins": ["https://frontend.example"],
         "trusted_hosts": ["api.example"],
@@ -85,6 +86,8 @@ def test_production_smtp_requires_a_sender_address() -> None:
         "smtp_password": "smtp-password",
         "smtp_use_tls": True,
         "smtp_use_ssl": False,
+        "default_provider": "openai",
+        "openai_api_key": "configured",
     }
 
     with pytest.raises(ValidationError, match="SMTP_FROM_EMAIL"):
@@ -114,12 +117,15 @@ def test_production_resend_requires_an_api_key_and_sender() -> None:
         "environment": "production",
         "jwt_secret_key": "a" * 32,
         "security_token_secret": "b" * 32,
+        "frontend_url": "https://frontend.example",
         "auth_cookie_secure": True,
         "cors_origins": ["https://frontend.example"],
         "trusted_hosts": ["api.example"],
         "email_provider": "resend",
         "SMTP_FROM_EMAIL": "sender@example.com",
         "SMTP_FROM_NAME": "Arima Executive OS",
+        "default_provider": "openai",
+        "openai_api_key": "configured",
     }
 
     with pytest.raises(ValidationError, match="RESEND_API_KEY"):
@@ -272,6 +278,7 @@ def test_production_smtp_rejects_localhost() -> None:
         "environment": "production",
         "jwt_secret_key": "a" * 32,
         "security_token_secret": "b" * 32,
+        "frontend_url": "https://frontend.example",
         "auth_cookie_secure": True,
         "cors_origins": ["https://frontend.example"],
         "trusted_hosts": ["api.example"],
@@ -282,6 +289,8 @@ def test_production_smtp_rejects_localhost() -> None:
         "smtp_use_tls": True,
         "smtp_use_ssl": False,
         "SMTP_FROM_EMAIL": "sender@example.com",
+        "default_provider": "openai",
+        "openai_api_key": "configured",
     }
 
     with pytest.raises(ValidationError, match="SMTP_HOST must reference"):

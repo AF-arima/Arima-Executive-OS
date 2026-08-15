@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import (
@@ -101,6 +102,12 @@ class Settings(BaseSettings):
     database_pool_recycle_seconds: int = Field(
         default=1_800, ge=60, le=86_400
     )
+    database_pool_timeout_seconds: float = Field(
+        default=10.0, ge=0.1, le=120.0
+    )
+    database_connect_timeout_seconds: float = Field(
+        default=10.0, ge=0.1, le=120.0
+    )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     dashboard_cache_ttl_seconds: int = Field(
         default=60,
@@ -188,11 +195,15 @@ class Settings(BaseSettings):
     arima_voice_session_timeout_seconds: int = Field(
         default=1_800, ge=60, le=86_400
     )
+    voice_transcript_rate_limit_per_minute: int = Field(
+        default=10, ge=1, le=1_000
+    )
     telegram_enabled: bool = False
     telegram_bot_token: SecretStr | None = Field(default=None, min_length=1)
     telegram_webhook_secret: SecretStr | None = Field(
         default=None, min_length=32, max_length=256
     )
+    ai_execution_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -271,6 +282,17 @@ class Settings(BaseSettings):
                     "webhook credentials"
                 )
         if self.environment == "production":
+            frontend = urlsplit(self.frontend_url)
+            if (
+                frontend.scheme != "https"
+                or not frontend.hostname
+                or frontend.username is not None
+                or frontend.password is not None
+                or frontend.hostname.lower() in LOCAL_SMTP_HOSTS
+            ):
+                raise ValueError(
+                    "FRONTEND_URL must be an external HTTPS URL in production"
+                )
             if not self.auth_cookie_secure:
                 raise ValueError(
                     "AUTH_COOKIE_SECURE must be enabled in production"
@@ -278,6 +300,27 @@ class Settings(BaseSettings):
             if not self.cors_origins or "*" in self.cors_origins:
                 raise ValueError(
                     "CORS_ORIGINS must contain explicit production origins"
+                )
+            frontend_origin = f"{frontend.scheme}://{frontend.netloc}"
+            for origin in self.cors_origins:
+                parsed_origin = urlsplit(origin)
+                if (
+                    parsed_origin.scheme != "https"
+                    or not parsed_origin.hostname
+                    or parsed_origin.username is not None
+                    or parsed_origin.password is not None
+                    or parsed_origin.path not in {"", "/"}
+                    or parsed_origin.query
+                    or parsed_origin.fragment
+                ):
+                    raise ValueError(
+                        "CORS_ORIGINS must contain HTTPS origins only in production"
+                    )
+            if frontend_origin not in {
+                origin.rstrip("/") for origin in self.cors_origins
+            }:
+                raise ValueError(
+                    "CORS_ORIGINS must include the FRONTEND_URL origin"
                 )
             if not self.trusted_hosts or "*" in self.trusted_hosts:
                 raise ValueError(
@@ -338,6 +381,38 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "TRUSTED_PROXY_IPS must not contain a wildcard in production"
                 )
+            if self.ai_execution_enabled and self.default_provider == "mock":
+                raise ValueError(
+                    "DEFAULT_PROVIDER must not use the mock provider in production"
+                )
+            provider_credentials = {
+                "openai": self.openai_api_key,
+                "anthropic": self.anthropic_api_key,
+                "nvidia": self.nvidia_api_key,
+            }
+            credential = provider_credentials.get(self.default_provider)
+            if (
+                self.ai_execution_enabled
+                and self.default_provider in provider_credentials
+                and (
+                    credential is None
+                    or not credential.get_secret_value().strip()
+                )
+            ):
+                raise ValueError(
+                    f"{self.default_provider.upper()}_API_KEY must be configured "
+                    "for the production default provider"
+                )
+            if self.ai_execution_enabled and self.default_provider == "ollama":
+                ollama = urlsplit(self.ollama_url)
+                if (
+                    ollama.scheme != "https"
+                    or not ollama.hostname
+                    or ollama.hostname.lower() in LOCAL_SMTP_HOSTS
+                ):
+                    raise ValueError(
+                        "OLLAMA_URL must be an external HTTPS URL in production"
+                    )
         if self.max_output_tokens > self.max_model_tokens:
             raise ValueError(
                 "MAX_OUTPUT_TOKENS cannot exceed MAX_MODEL_TOKENS"

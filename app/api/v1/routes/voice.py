@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -5,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.v1.dependencies import AUTHENTICATED_RESPONSES, SessionDependency
 from app.auth.dependencies import get_current_active_user
+from app.auth.security import SecurityRateLimiter
 from app.core.config import get_settings
 from app.database.models import User
 from app.voice.exceptions import (
@@ -88,6 +90,12 @@ async def submit_voice_transcript(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Transcript exceeds configured maximum length",
         )
+    await SecurityRateLimiter(database).enforce(
+        scope="voice_transcript",
+        key=str(actor.id),
+        limit=settings.voice_transcript_rate_limit_per_minute,
+        window=timedelta(minutes=1),
+    )
     voice_gateway = gateway(database)
     try:
         return await voice_gateway.handle_transcript(

@@ -6,6 +6,7 @@ from time import perf_counter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import AuditAction, AuditEntity
+from app.core.redaction import safe_failure_detail
 from app.integrations.context import IntegrationExecutionContext
 from app.integrations.exceptions import (
     IntegrationApprovalRequiredError,
@@ -62,7 +63,9 @@ class IntegrationExecutionService:
             duration = self._duration(started)
             result = ConnectorResult(
                 success=False,
-                failure=str(error),
+                failure=safe_failure_detail(
+                    "Integration validation failed", error
+                ),
                 execution_duration_ms=duration,
                 provider=connector.provider(),
                 connector_version=connector.connector_version(),
@@ -143,7 +146,9 @@ class IntegrationExecutionService:
             duration = self._duration(started)
             result = ConnectorResult(
                 success=False,
-                failure=str(error),
+                failure=safe_failure_detail(
+                    "Integration execution failed", error
+                ),
                 execution_duration_ms=duration,
                 provider=connector.provider(),
                 connector_version=connector.connector_version(),

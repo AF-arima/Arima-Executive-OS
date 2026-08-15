@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 from time import perf_counter
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import AuditAction, AuditEntity
+from app.core.redaction import safe_failure_detail
 from app.services.audit import record_audit
 from app.tools.context import ToolExecutionContext
 from app.tools.exceptions import ToolPermissionDeniedError
@@ -22,6 +24,8 @@ from app.tools.schemas import (
     ToolExecutionRequest,
     ToolResult,
 )
+
+logger = logging.getLogger("arima.tool")
 
 
 class ToolExecutionService:
@@ -85,9 +89,18 @@ class ToolExecutionService:
             outcome = "success"
         except Exception as error:
             duration = self._duration(started)
+            logger.warning(
+                "tool_execution_failed",
+                extra={
+                    "tool": tool.tool_name(),
+                    "run_id": str(context.run.id),
+                    "correlation_id": str(context.correlation_id),
+                    "error_type": type(error).__name__,
+                },
+            )
             result = ToolResult(
                 success=False,
-                failure=str(error),
+                failure=safe_failure_detail("Tool execution failed", error),
                 execution_time_ms=duration,
                 tool_version=tool.tool_version(),
                 correlation_id=context.correlation_id,

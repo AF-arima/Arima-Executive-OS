@@ -410,6 +410,10 @@ def test_provider_failure_retry_exhaustion_retry_preparation_and_cancel(
             assert run is not None
             assert run.status is AgentRunStatus.FAILED
             assert run.failure_code == "RetryExhausted"
+            assert run.failure_message == (
+                "Agent execution failed (RetryExhausted)"
+            )
+            assert "deterministic failure" not in run.failure_message
             preparation = await orchestrator.prepare_retry(run_id, actor)
             assert preparation.next_attempt == 2
             assert preparation.retryable is True

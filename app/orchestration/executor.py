@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.background.context import BackgroundExecutionContext
+from app.core.redaction import safe_failure_detail
 from app.background.schemas import (
     BackgroundExecutionRequest,
     BackgroundPermission,
@@ -81,7 +82,9 @@ class OrchestrationExecutor(HealthContract):
                         name=step.name,
                         success=False,
                         output=self.fallback.graceful(error),
-                        error=str(error),
+                        error=safe_failure_detail(
+                            "Orchestration action failed", error
+                        ),
                     )
                 )
                 if not self.fallback.policy.graceful_degradation:

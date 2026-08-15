@@ -2,6 +2,7 @@ from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from app.orchestration.exceptions import OrchestrationFallbackExhausted
+from app.core.redaction import safe_failure_detail
 from app.orchestration.health import HealthContract
 from app.orchestration.policy import OrchestrationPolicy
 from app.providers.base import ProviderAdapter
@@ -25,7 +26,10 @@ class OrchestrationFallback(HealthContract):
             except Exception as error:
                 last_error = error
         raise OrchestrationFallbackExhausted(
-            str(last_error or "Fallback exhausted")
+            safe_failure_detail(
+                "Orchestration fallback exhausted",
+                last_error or RuntimeError("Fallback exhausted"),
+            )
         ) from last_error
 
     @staticmethod
@@ -33,7 +37,9 @@ class OrchestrationFallback(HealthContract):
         return {
             "degraded": True,
             "error": type(error).__name__,
-            "message": str(error),
+            "message": safe_failure_detail(
+                "Orchestration action failed", error
+            ),
         }
 
     @staticmethod

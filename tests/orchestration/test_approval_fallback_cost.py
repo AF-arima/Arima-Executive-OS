@@ -70,7 +70,12 @@ def test_fallback_retry_and_graceful_degradation() -> None:
         result, retries = await fallback.retry(flaky)
         assert result == "ok"
         assert retries == 1
-        assert fallback.graceful(RuntimeError("x"))["degraded"] is True
+        degraded = fallback.graceful(RuntimeError("private-provider-detail"))
+        assert degraded["degraded"] is True
+        assert degraded["message"] == (
+            "Orchestration action failed (RuntimeError)"
+        )
+        assert "private-provider-detail" not in str(degraded)
         assert (
             fallback.model_fallback(
                 "missing", ("mock-model",), frozenset({"mock-model"})
