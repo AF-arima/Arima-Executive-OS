@@ -41,7 +41,7 @@ def _audit_entity_type(*values: str) -> sa.Enum:
         *values,
         name="audit_entity",
         native_enum=False,
-        create_constraint=True,
+        create_constraint=False,
     )
 
 
