@@ -33,6 +33,7 @@ from app.services.exceptions import (
 )
 from app.services.permissions import user_roles
 from app.voice.gateway import VoiceGateway
+from app.voice.conversation import VoiceConversationResolver
 from app.voice.exceptions import VoicePermissionDenied
 from app.voice.orchestration import DurableVoiceOrchestration
 from app.voice.schemas import VoiceSession
@@ -210,5 +211,6 @@ class VoiceGatewayFactory:
                 self.database, orchestration
             ),
             context_factory=VoiceOrchestrationContextFactory(self.database),
+            conversation_resolver=VoiceConversationResolver(self.database),
             enabled=self.enabled,
         )

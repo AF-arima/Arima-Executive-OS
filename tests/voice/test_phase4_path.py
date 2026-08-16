@@ -164,6 +164,32 @@ async def test_voice_rejects_legacy_conversation_without_workspace_metadata() ->
 
 
 @pytest.mark.asyncio
+async def test_voice_rejects_malformed_workspace_metadata_without_repair() -> None:
+    async with sqlite_session() as database:
+        seed = await make_intelligence_context(database)
+        seed.conversation.metadata_ = {"workspace_id": "not-a-workspace-id"}
+        await database.commit()
+        sessions = VoiceSessionStore(database)
+        voice_session = await sessions.create(
+            VoiceSessionCreate(conversation_id=seed.conversation.id),
+            seed.user.id,
+        )
+
+        with pytest.raises(VoicePermissionDenied):
+            await VoiceOrchestrationContextFactory(database)(
+                voice_session,
+                seed.user,
+                "Analyse this decision",
+            )
+
+        conversation = await database.get(
+            type(seed.conversation), seed.conversation.id
+        )
+        assert conversation is not None
+        assert conversation.metadata_["workspace_id"] == "not-a-workspace-id"
+
+
+@pytest.mark.asyncio
 async def test_voice_rejects_non_invoking_role_after_grant() -> None:
     async with sqlite_session() as database:
         seed = await make_intelligence_context(database, role_name="viewer")

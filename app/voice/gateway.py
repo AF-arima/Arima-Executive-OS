@@ -71,6 +71,10 @@ class ContextFactory(Protocol):
     ) -> OrchestrationExecutionContext: ...
 
 
+class ConversationResolver(Protocol):
+    async def resolve(self, actor: User) -> UUID: ...
+
+
 class VoiceOrchestration(Protocol):
     async def execute(
         self,
@@ -93,18 +97,26 @@ class VoiceGateway:
         context_factory: ContextFactory,
         enabled: bool = True,
         experience_mapper: ExperienceEventMapper | None = None,
+        conversation_resolver: ConversationResolver | None = None,
     ) -> None:
         self.sessions = sessions
         self.orchestration = orchestration
         self.context_factory = context_factory
         self.enabled = enabled
         self.experience_mapper = experience_mapper or ExperienceEventMapper()
+        self.conversation_resolver = conversation_resolver
 
     async def create_session(
         self,
         data: VoiceSessionCreate,
         actor: User,
     ) -> tuple[VoiceSession, list[VoiceEvent]]:
+        if data.conversation_id is None:
+            if self.conversation_resolver is None:
+                raise VoicePermissionDenied("Voice AI authorization denied")
+            data = data.model_copy(
+                update={"conversation_id": await self.conversation_resolver.resolve(actor)}
+            )
         session = await self.sessions.create(data, actor.id)
         return session, [
             self._event(
