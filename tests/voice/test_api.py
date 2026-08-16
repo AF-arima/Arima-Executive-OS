@@ -1,10 +1,62 @@
-from tests.auth.helpers import bearer, login_user, register_user
+import asyncio
+
+from sqlalchemy import func, select
+
+from app.database.models import AgentConversation, VoiceSessionRecord
+from app.database.repositories import UserRepository, WorkspaceRepository
+from app.intelligence.access import AgentGrantService
 from app.core.config import get_settings
+from app.services.agent_bootstrap import bootstrap_agent_platform
+from tests.auth.helpers import bearer, login_user, register_user
 from tests.management.conftest import management_context
 
 __all__ = ["management_context"]
 
 CONFIGURED_FRONTEND_ORIGIN = "http://localhost:3000"
+PRODUCTION_FRONTEND_ORIGIN = "https://arimafinance.xyz"
+
+
+def configure_default_voice_agent(
+    management_context,
+    email: str,
+    *,
+    grant: bool,
+) -> None:
+    async def configure() -> None:
+        async with management_context.session_factory() as session:
+            user = await UserRepository(session).get_by_email(email)
+            assert user is not None
+            agent = await bootstrap_agent_platform(session, created_by_id=user.id)
+            if grant:
+                workspace = await WorkspaceRepository(session).get_by_owner(user.id)
+                assert workspace is not None
+                await AgentGrantService(session).grant(
+                    workspace_id=workspace.id,
+                    agent_id=agent.agent.id,
+                    actor=user,
+                )
+
+    asyncio.run(configure())
+
+
+def voice_record_counts(management_context, email: str) -> tuple[int, int]:
+    async def count() -> tuple[int, int]:
+        async with management_context.session_factory() as session:
+            user = await UserRepository(session).get_by_email(email)
+            assert user is not None
+            conversations = await session.scalar(
+                select(func.count(AgentConversation.id)).where(
+                    AgentConversation.owner_id == user.id
+                )
+            )
+            sessions = await session.scalar(
+                select(func.count(VoiceSessionRecord.id)).where(
+                    VoiceSessionRecord.user_id == user.id
+                )
+            )
+            return int(conversations or 0), int(sessions or 0)
+
+    return asyncio.run(count())
 
 
 def test_configured_frontend_voice_session_preflight(
@@ -49,6 +101,9 @@ def test_voice_transcripts_are_rate_limited_per_authenticated_user(
     management_context,
 ) -> None:
     register_user(management_context, "voice-rate-limit@example.com")
+    configure_default_voice_agent(
+        management_context, "voice-rate-limit@example.com", grant=True
+    )
     tokens = login_user(management_context, "voice-rate-limit@example.com")
     headers = bearer(tokens["access_token"])
     created = management_context.client.post(
@@ -81,6 +136,9 @@ def test_voice_transcripts_are_rate_limited_per_authenticated_user(
 
 def test_voice_session_command_and_health_routes(management_context) -> None:
     register_user(management_context, "voice@example.com")
+    configure_default_voice_agent(
+        management_context, "voice@example.com", grant=True
+    )
     tokens = login_user(management_context, "voice@example.com")
     headers = bearer(tokens["access_token"])
     created = management_context.client.post(
@@ -129,6 +187,9 @@ def test_voice_session_ownership_is_preserved_across_requests(
 ) -> None:
     register_user(management_context, "voice-owner@example.com")
     register_user(management_context, "voice-other@example.com")
+    configure_default_voice_agent(
+        management_context, "voice-owner@example.com", grant=True
+    )
     owner = login_user(management_context, "voice-owner@example.com")
     other = login_user(management_context, "voice-other@example.com")
 
@@ -152,3 +213,51 @@ def test_voice_session_ownership_is_preserved_across_requests(
     )
     assert fetched.status_code == 200
     assert fetched.json()["user_id"] == created.json()["user_id"]
+
+
+def test_missing_default_agent_grant_returns_cors_protected_403_without_records(
+    management_context,
+) -> None:
+    email = "voice-no-grant@example.com"
+    register_user(management_context, email)
+    configure_default_voice_agent(management_context, email, grant=False)
+    tokens = login_user(management_context, email)
+    settings = get_settings()
+    original_origins = list(settings.cors_origins)
+    settings.cors_origins[:] = [PRODUCTION_FRONTEND_ORIGIN]
+    try:
+        before = voice_record_counts(management_context, email)
+        response = management_context.client.post(
+            "/api/v1/voice/sessions",
+            json={},
+            headers={
+                **bearer(tokens["access_token"]),
+                "Origin": PRODUCTION_FRONTEND_ORIGIN,
+            },
+        )
+    finally:
+        settings.cors_origins[:] = original_origins
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Voice AI authorization denied"}
+    assert response.headers["access-control-allow-origin"] == (
+        PRODUCTION_FRONTEND_ORIGIN
+    )
+    assert voice_record_counts(management_context, email) == before
+
+
+def test_authorized_default_agent_grant_creates_voice_session(
+    management_context,
+) -> None:
+    email = "voice-authorized-default@example.com"
+    register_user(management_context, email)
+    configure_default_voice_agent(management_context, email, grant=True)
+    tokens = login_user(management_context, email)
+
+    response = management_context.client.post(
+        "/api/v1/voice/sessions",
+        json={},
+        headers=bearer(tokens["access_token"]),
+    )
+
+    assert response.status_code == 201

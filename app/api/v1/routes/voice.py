@@ -55,7 +55,10 @@ async def create_voice_session(
     actor: VoiceUser,
 ) -> VoiceSession:
     voice_gateway = gateway(database)
-    voice_session, _ = await voice_gateway.create_session(data, actor)
+    try:
+        voice_session, _ = await voice_gateway.create_session(data, actor)
+    except VoicePermissionDenied as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     return voice_session
 
 
