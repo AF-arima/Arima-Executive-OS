@@ -19,7 +19,11 @@ from app.schemas.founder import (
     ManualObservationCreate,
     ManualObservationRead,
 )
+from app.schemas.voice_diagnostic import VoiceAuthorizationDiagnostic
 from app.services.founder_control import FounderControlService
+from app.services.voice_authorization_diagnostic import (
+    VoiceAuthorizationDiagnosticService,
+)
 
 router = APIRouter(prefix="/admin", tags=["administration"])
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
@@ -84,6 +88,21 @@ async def founder_data_feeds(
 ) -> FounderDataFeeds:
     del current_user
     return await FounderControlService(session).data_feeds()
+
+
+@router.get(
+    "/founder/voice/sessions/{session_id}/authorization-diagnostic",
+    response_model=VoiceAuthorizationDiagnostic,
+)
+async def founder_voice_authorization_diagnostic(
+    session_id: UUID,
+    session: SessionDependency,
+    current_user: FounderControlUser,
+) -> VoiceAuthorizationDiagnostic:
+    return await VoiceAuthorizationDiagnosticService(session).inspect(
+        session_id,
+        operator=current_user,
+    )
 
 
 @router.post(

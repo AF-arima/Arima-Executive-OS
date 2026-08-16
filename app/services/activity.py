@@ -72,6 +72,7 @@ class ActivityService:
         entity: AuditEntity,
     ) -> str:
         labels = {
+            AuditAction.READ: "inspected",
             AuditAction.CREATE: "created",
             AuditAction.UPDATE: "updated",
             AuditAction.DELETE: "deleted",

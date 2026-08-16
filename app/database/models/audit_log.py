@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 
 class AuditAction(str, Enum):
+    READ = "read"
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
@@ -32,6 +33,7 @@ class AuditAction(str, Enum):
 
 
 class AuditEntity(str, Enum):
+    VOICE_AUTHORIZATION_DIAGNOSTIC = "voice_authorization_diagnostic"
     PROJECT = "project"
     TASK = "task"
     COMPANY = "company"
