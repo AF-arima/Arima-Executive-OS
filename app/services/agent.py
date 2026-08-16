@@ -32,6 +32,7 @@ from app.database.repositories import (
     AgentToolExecutionRepository,
     Page,
     UserRepository,
+    WorkspaceRepository,
 )
 from app.schemas.agent import (
     AgentApprovalFilter,
@@ -343,6 +344,9 @@ class ConversationService:
         owner = await self.users.get_with_roles(owner_id)
         if owner is None or not owner.is_active:
             raise ResourceNotFoundError("User not found")
+        workspace = await WorkspaceRepository(self.session).get_by_owner(owner_id)
+        if workspace is None:
+            raise ResourceNotFoundError("Workspace not found")
         agent = await self.agents.get(data.agent_id)
         if (
             agent is None
@@ -350,13 +354,15 @@ class ConversationService:
             or agent.archived_at is not None
         ):
             raise ResourceConflictError("An active agent is required")
+        metadata = dict(data.metadata)
+        metadata["workspace_id"] = str(workspace.id)
         conversation = await self.conversations.create(
             {
                 "agent_id": data.agent_id,
                 "owner_id": owner_id,
                 "title": data.title,
                 "priority": data.priority,
-                "metadata": data.metadata,
+                "metadata": metadata,
                 "status": ConversationStatus.ACTIVE,
                 "pinned": False,
             }

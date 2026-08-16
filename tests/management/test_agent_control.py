@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 
-from app.database.models import AgentApproval, AuditLog, Notification
+from app.database.models import AgentApproval, AuditLog, Notification, Workspace
 from tests.auth.conftest import AuthTestContext
 from tests.auth.helpers import (
     bearer,
@@ -66,6 +66,54 @@ def create_conversation(
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_conversation_creation_binds_owner_workspace_and_overwrites_metadata(
+    management_context: AuthTestContext,
+) -> None:
+    _, admin_headers = prepare_user(
+        management_context,
+        "conversation-binding-admin@example.com",
+        "administrator",
+    )
+    owner, owner_headers = prepare_user(
+        management_context,
+        "conversation-binding-owner@example.com",
+        "analyst",
+    )
+    agent = create_active_agent(
+        management_context,
+        admin_headers,
+        slug="conversation-binding-agent",
+    )
+
+    async def owner_workspace_id() -> UUID:
+        async with management_context.session_factory() as session:
+            workspace = await session.scalar(
+                select(Workspace).where(
+                    Workspace.owner_id == UUID(str(owner["id"]))
+                )
+            )
+            assert workspace is not None
+            return workspace.id
+
+    workspace_id = asyncio.run(owner_workspace_id())
+    response = management_context.client.post(
+        "/api/v1/conversations",
+        headers=owner_headers,
+        json={
+            "agent_id": agent["id"],
+            "title": "Workspace-bound conversation",
+            "metadata": {
+                "channel": "test",
+                "workspace_id": str(UUID(int=0)),
+            },
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["metadata"]["workspace_id"] == str(workspace_id)
+    assert response.json()["metadata"]["channel"] == "test"
 
 
 def test_agent_lifecycle_permissions_pagination_audit_and_notification(

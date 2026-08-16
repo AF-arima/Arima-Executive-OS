@@ -18,6 +18,7 @@ from app.intelligence.schemas import (
     KnowledgeSourceInput,
 )
 from app.orchestration.engine import OrchestrationEngine
+from app.services.exceptions import PermissionDeniedError
 from app.voice.exceptions import VoicePermissionDenied
 from app.voice.factory import (
     VoiceGatewayFactory,
@@ -126,6 +127,57 @@ async def test_voice_rejects_missing_grant_before_ai_run() -> None:
         )
 
         with pytest.raises(VoicePermissionDenied):
+            await VoiceOrchestrationContextFactory(database)(
+                voice_session,
+                seed.user,
+                "Analyse this decision",
+            )
+
+        runs = (
+            await database.scalars(
+                select(AgentRun).where(
+                    AgentRun.conversation_id == seed.conversation.id
+                )
+            )
+        ).all()
+        assert runs == [seed.run]
+
+
+@pytest.mark.asyncio
+async def test_voice_rejects_legacy_conversation_without_workspace_metadata() -> None:
+    async with sqlite_session() as database:
+        seed = await make_intelligence_context(database)
+        seed.conversation.metadata_ = {}
+        await database.commit()
+        sessions = VoiceSessionStore(database)
+        voice_session = await sessions.create(
+            VoiceSessionCreate(conversation_id=seed.conversation.id),
+            seed.user.id,
+        )
+
+        with pytest.raises(VoicePermissionDenied):
+            await VoiceOrchestrationContextFactory(database)(
+                voice_session,
+                seed.user,
+                "Analyse this decision",
+            )
+
+
+@pytest.mark.asyncio
+async def test_voice_rejects_non_invoking_role_after_grant() -> None:
+    async with sqlite_session() as database:
+        seed = await make_intelligence_context(database, role_name="viewer")
+        await AgentGrantService(database).grant(
+            workspace_id=seed.workspace.id,
+            agent_id=seed.agent.id,
+            actor=seed.user,
+        )
+        voice_session = await VoiceSessionStore(database).create(
+            VoiceSessionCreate(conversation_id=seed.conversation.id),
+            seed.user.id,
+        )
+
+        with pytest.raises(PermissionDeniedError):
             await VoiceOrchestrationContextFactory(database)(
                 voice_session,
                 seed.user,
