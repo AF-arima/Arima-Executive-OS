@@ -1,6 +1,6 @@
 """Add an audited Voice authorization diagnostic event.
 
-Revision ID: 20260816_0016_voice_auth_diagnostic
+Revision ID: 20260816_0016_voice_diag
 Revises: 20260814_0015_ai
 Create Date: 2026-08-16
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260816_0016_voice_auth_diagnostic"
+revision: str = "20260816_0016_voice_diag"
 down_revision: str | None = "20260814_0015_ai"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
