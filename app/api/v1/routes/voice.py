@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.database.models import User
 from app.voice.exceptions import (
     VoicePermissionDenied,
+    VoiceSessionBusy,
     VoiceSessionAccessDenied,
     VoiceSessionNotFound,
 )
@@ -111,6 +112,8 @@ async def submit_voice_transcript(
         raise HTTPException(status_code=403, detail=str(error)) from error
     except VoicePermissionDenied as error:
         raise HTTPException(status_code=403, detail=str(error)) from error
+    except VoiceSessionBusy as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.post(

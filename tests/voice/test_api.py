@@ -1,4 +1,6 @@
 import asyncio
+from datetime import datetime, timezone
+from uuid import UUID
 
 from sqlalchemy import func, select
 
@@ -7,6 +9,7 @@ from app.database.repositories import UserRepository, WorkspaceRepository
 from app.intelligence.access import AgentGrantService
 from app.core.config import get_settings
 from app.services.agent_bootstrap import bootstrap_agent_platform
+from app.voice.state import VoiceState
 from tests.auth.helpers import bearer, login_user, register_user
 from tests.management.conftest import management_context
 
@@ -132,6 +135,41 @@ def test_voice_transcripts_are_rate_limited_per_authenticated_user(
     assert second.status_code == 429
     assert second.json() == {"detail": "Too many requests. Try again later."}
     assert int(second.headers["Retry-After"]) > 0
+
+
+def test_active_transcript_returns_conflict_instead_of_internal_error(
+    management_context,
+) -> None:
+    email = "voice-active-transcript@example.com"
+    register_user(management_context, email)
+    configure_default_voice_agent(management_context, email, grant=True)
+    tokens = login_user(management_context, email)
+    headers = bearer(tokens["access_token"])
+    created = management_context.client.post(
+        "/api/v1/voice/sessions", json={}, headers=headers
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    async def mark_thinking() -> None:
+        async with management_context.session_factory() as session:
+            record = await session.get(VoiceSessionRecord, UUID(session_id))
+            assert record is not None
+            record.state = VoiceState.THINKING.value
+            record.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+
+    asyncio.run(mark_thinking())
+    response = management_context.client.post(
+        f"/api/v1/voice/sessions/{session_id}/transcript",
+        json={"transcript": "Open Portfolio"},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "A transcript is already being processed for this session"
+    }
 
 
 def test_voice_session_command_and_health_routes(management_context) -> None:

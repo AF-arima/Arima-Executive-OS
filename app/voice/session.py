@@ -96,6 +96,44 @@ class VoiceSessionStore:
         await self.database.commit()
         return updated
 
+    async def claim_transcript(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        transcript: str,
+    ) -> VoiceSession | None:
+        """Atomically claim a ready session for one transcript."""
+        now = self.clock()
+        ready_states = tuple(
+            state.value
+            for state in (
+                VoiceState.IDLE,
+                VoiceState.LISTENING,
+                VoiceState.SPEECH_DETECTED,
+                VoiceState.COMPLETED,
+                VoiceState.INTERRUPTED,
+                VoiceState.ERROR,
+            )
+        )
+        result = await self.database.execute(
+            update(VoiceSessionRecord)
+            .where(
+                VoiceSessionRecord.id == session_id,
+                VoiceSessionRecord.user_id == user_id,
+                VoiceSessionRecord.state.in_(ready_states),
+            )
+            .values(
+                state=VoiceState.PROCESSING.value,
+                transcript=transcript,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await self.database.commit()
+        if int(getattr(result, "rowcount", 0) or 0) != 1:
+            return None
+        return await self.get(session_id, user_id, refresh=True)
+
     async def recover_stale_thinking(
         self,
         session_id: UUID,

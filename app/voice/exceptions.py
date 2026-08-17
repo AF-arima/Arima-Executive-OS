@@ -10,6 +10,10 @@ class VoiceSessionAccessDenied(VoiceError):
     pass
 
 
+class VoiceSessionBusy(VoiceError):
+    """A transcript is already being processed for this voice session."""
+
+
 class InvalidVoiceStateTransition(VoiceError):
     pass
 

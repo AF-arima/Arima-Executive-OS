@@ -10,6 +10,7 @@ from app.orchestration.exceptions import OrchestrationApprovalRequired
 from app.orchestration.factory import OrchestrationFactory
 from app.voice.exceptions import (
     InvalidVoiceStateTransition,
+    VoiceSessionBusy,
     VoicePermissionDenied,
 )
 from app.services.exceptions import ResourceNotFoundError
@@ -346,7 +347,7 @@ def test_active_thinking_session_is_not_recovered() -> None:
             )
             now = NOW + timedelta(seconds=59)
 
-            with pytest.raises(InvalidVoiceStateTransition):
+            with pytest.raises(VoiceSessionBusy):
                 await gateway.handle_transcript(
                     session.session_id, "Open my portfolio", actor
                 )
@@ -405,7 +406,7 @@ def test_atomic_recovery_cannot_overwrite_newly_active_transcript() -> None:
             assert store.recovery_results == [True]
 
             store.release_first_recovery.set()
-            with pytest.raises(InvalidVoiceStateTransition):
+            with pytest.raises(VoiceSessionBusy):
                 await request_a
 
             current = await gateway.sessions.get(session.session_id, actor.id)
@@ -448,6 +449,29 @@ def test_atomic_recovery_only_transitions_unchanged_stale_session() -> None:
 
             assert recovered is True
             assert current.state is VoiceState.ERROR
+
+    asyncio.run(scenario())
+
+
+def test_atomic_transcript_claim_allows_only_one_ready_submission() -> None:
+    async def scenario() -> None:
+        async with sqlite_session() as database:
+            gateway, actor, _ = await build_gateway(database)
+            session, _ = await gateway.create_session(
+                VoiceSessionCreate(), actor
+            )
+
+            first = await gateway.sessions.claim_transcript(
+                session.session_id, actor.id, "first transcript"
+            )
+            second = await gateway.sessions.claim_transcript(
+                session.session_id, actor.id, "second transcript"
+            )
+
+            assert first is not None
+            assert first.state is VoiceState.PROCESSING
+            assert first.transcript == "first transcript"
+            assert second is None
 
     asyncio.run(scenario())
 
