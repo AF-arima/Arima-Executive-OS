@@ -9,6 +9,7 @@ from app.providers.exceptions import (
 )
 from app.providers.providers import (
     AnthropicProvider,
+    GeminiProvider,
     MockProvider,
     NvidiaProvider,
     OllamaProvider,
@@ -35,6 +36,7 @@ class ProviderFactory:
             ProviderName.MOCK: MockProvider,
             ProviderName.OPENAI: OpenAIProvider,
             ProviderName.ANTHROPIC: AnthropicProvider,
+            ProviderName.GEMINI: GeminiProvider,
             ProviderName.NVIDIA: NvidiaProvider,
             ProviderName.OLLAMA: OllamaProvider,
         }

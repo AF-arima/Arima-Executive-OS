@@ -165,12 +165,14 @@ class Settings(BaseSettings):
     )
     openai_api_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = None
+    gemini_api_key: SecretStr | None = None
     nvidia_api_key: SecretStr | None = None
     ollama_url: str = "http://localhost:11434"
     default_provider: Literal[
         "mock",
         "openai",
         "anthropic",
+        "gemini",
         "nvidia",
         "ollama",
     ] = "mock"
@@ -388,6 +390,7 @@ class Settings(BaseSettings):
             provider_credentials = {
                 "openai": self.openai_api_key,
                 "anthropic": self.anthropic_api_key,
+                "gemini": self.gemini_api_key,
                 "nvidia": self.nvidia_api_key,
             }
             credential = provider_credentials.get(self.default_provider)

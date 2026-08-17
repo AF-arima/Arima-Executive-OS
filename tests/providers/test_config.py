@@ -15,6 +15,7 @@ def test_settings_support_provider_environment_variables(
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "not-a-real-secret")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "not-a-real-secret")
+    monkeypatch.setenv("GEMINI_API_KEY", "not-a-real-secret")
     monkeypatch.setenv("NVIDIA_API_KEY", "not-a-real-secret")
     monkeypatch.setenv("OLLAMA_URL", "http://localhost:9999")
     monkeypatch.setenv("DEFAULT_PROVIDER", "mock")
@@ -26,6 +27,7 @@ def test_settings_support_provider_environment_variables(
     settings = Settings(_env_file=None)
     assert isinstance(settings.openai_api_key, SecretStr)
     assert isinstance(settings.anthropic_api_key, SecretStr)
+    assert isinstance(settings.gemini_api_key, SecretStr)
     assert isinstance(settings.nvidia_api_key, SecretStr)
     assert settings.ollama_url == "http://localhost:9999"
     assert settings.default_provider == "mock"
@@ -38,6 +40,7 @@ def test_settings_support_provider_environment_variables(
     assert platform.default_provider is ProviderName.MOCK
     assert platform.default_model == "deterministic-test-model"
     assert platform.for_provider(ProviderName.OPENAI).api_key is not None
+    assert platform.for_provider(ProviderName.GEMINI).api_key is not None
     assert (
         platform.for_provider(ProviderName.OLLAMA).base_url
         == "http://localhost:9999"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from time import perf_counter
 
@@ -9,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import AuditAction, AuditEntity
 from app.orchestration.approval import OrchestrationApprovalEngine
 from app.orchestration.context import (
-    BuiltOrchestrationContext,
     OrchestrationContextBuilder,
     OrchestrationExecutionContext,
 )
@@ -20,6 +18,8 @@ from app.orchestration.health import HealthContract
 from app.orchestration.memory import OrchestrationMemory
 from app.orchestration.optimizer import OrchestrationOptimizer
 from app.orchestration.planner import OrchestrationPlanner
+from app.orchestration.provider_prompt import ProviderPromptBuilder
+from app.orchestration.response_validation import ResponseValidator
 from app.orchestration.router import (
     AgentRouter,
     IntentEngine,
@@ -28,7 +28,6 @@ from app.orchestration.router import (
 )
 from app.orchestration.schemas import (
     AgentCandidate,
-    ExecutedAction,
     ModelProfile,
     OrchestrationIntent,
     OrchestrationResult,
@@ -67,6 +66,8 @@ class OrchestrationPipeline(HealthContract):
         fallback: OrchestrationFallback,
         cost: OrchestrationCostEngine,
         telemetry: OrchestrationTelemetry,
+        provider_prompt: ProviderPromptBuilder | None = None,
+        response_validator: ResponseValidator | None = None,
     ) -> None:
         self.session = session
         self.intent = intent
@@ -83,6 +84,8 @@ class OrchestrationPipeline(HealthContract):
         self.fallback = fallback
         self.cost = cost
         self.telemetry = telemetry
+        self.provider_prompt = provider_prompt or ProviderPromptBuilder()
+        self.response_validator = response_validator or ResponseValidator()
 
     async def execute(
         self, context: OrchestrationExecutionContext
@@ -138,13 +141,11 @@ class OrchestrationPipeline(HealthContract):
                     messages=(
                         ProviderMessage(
                             role=MessageRole.SYSTEM,
-                            content=built.system_prompt
-                            + "\n"
-                            + built.agent_instructions,
+                            content=self.provider_prompt.system_instructions,
                         ),
                         ProviderMessage(
                             role=MessageRole.USER,
-                            content=self._response_prompt(context, built, actions),
+                            content=self.provider_prompt.build(context, built),
                         ),
                     ),
                     max_output_tokens=context.request.max_output_tokens,
@@ -153,6 +154,13 @@ class OrchestrationPipeline(HealthContract):
             )
         )
         retries += provider_retries
+        validated = self.response_validator.validate(
+            response.content,
+            allowed_evidence_ids=frozenset(
+                str(item)
+                for item in context.request.metadata.get("evidence_ids", [])
+            ),
+        )
         tool_actions = [
             action
             for action in actions
@@ -181,7 +189,7 @@ class OrchestrationPipeline(HealthContract):
         chunks = []
         if context.request.stream:
             async for chunk in self.streamer.stream(
-                response.content,
+                validated.content,
                 progress=(
                     "intent_detected",
                     "plan_executed",
@@ -234,9 +242,13 @@ class OrchestrationPipeline(HealthContract):
             approvals=approvals,
             costs=cost,
             latency_ms=latency,
-            warnings=warnings,
+            warnings=(
+                warnings
+                + (["Provider response was replaced by safety validation"]
+                   if not validated.accepted else [])
+            ),
             failures=failures,
-            final_response=response.content,
+            final_response=validated.content,
             chunks=chunks,
         )
 
@@ -255,30 +267,3 @@ class OrchestrationPipeline(HealthContract):
         if profile.value == "reasoning":
             required.add(ProviderCapability.REASONING)
         return frozenset(required)
-
-    @staticmethod
-    def _response_prompt(
-        context: OrchestrationExecutionContext,
-        built: BuiltOrchestrationContext,
-        actions: list[ExecutedAction],
-    ) -> str:
-        sections = []
-        if built.executive_state is not None:
-            sections.append(
-                "EXECUTIVE STATE\n"
-                + json.dumps(
-                    built.executive_state,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-            )
-        if built.memories:
-            sections.append("MEMORY\n" + "\n".join(built.memories))
-        summaries = [
-            f"{action.name}={action.output}" for action in actions
-        ]
-        if summaries:
-            sections.append("EXECUTION RESULTS\n" + "\n".join(summaries))
-        sections.append("USER REQUEST\n" + context.request.content)
-        return "\n\n".join(sections)

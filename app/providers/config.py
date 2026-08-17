@@ -81,6 +81,14 @@ class ProviderPlatformConfig:
                 ProviderName.ANTHROPIC,
                 api_key=settings.anthropic_api_key,
             ),
+            ProviderName.GEMINI: build(
+                ProviderName.GEMINI,
+                api_key=settings.gemini_api_key,
+                capabilities=ProviderCapabilities(
+                    streaming=True,
+                    reasoning=True,
+                ),
+            ),
             ProviderName.NVIDIA: build(
                 ProviderName.NVIDIA,
                 api_key=settings.nvidia_api_key,

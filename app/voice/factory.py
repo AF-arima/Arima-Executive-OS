@@ -13,7 +13,7 @@ from app.intelligence.access import (
     require_workspace_membership,
 )
 from app.intelligence.retrieval import TenantSafeRetrievalService
-from app.intelligence.schemas import RetrievalQuery, RetrievedKnowledge
+from app.intelligence.schemas import RetrievalQuery
 from app.orchestration.context import OrchestrationExecutionContext
 from app.orchestration.factory import OrchestrationFactory
 from app.orchestration.schemas import OrchestrationRequest
@@ -147,7 +147,6 @@ class VoiceOrchestrationContextFactory:
                 actor,
             )
             raise
-        content = self._context_text(transcript, evidence)
         permissions: set[str] = set()
         for role in user_roles(actor):
             permissions.update(ROLE_PERMISSIONS.get(role, ()))
@@ -157,7 +156,7 @@ class VoiceOrchestrationContextFactory:
             conversation=conversation,
             run=run,
             request=OrchestrationRequest(
-                content=content,
+                content=transcript,
                 stream=True,
                 metadata={
                     "channel": "browser_voice",
@@ -166,6 +165,15 @@ class VoiceOrchestrationContextFactory:
                     "evidence_ids": [
                         str(item.evidence_id) for item in evidence
                     ],
+                    "provider_evidence": [
+                        {
+                            "evidence_id": str(item.evidence_id),
+                            "source_id": str(item.source_id),
+                            "document_id": str(item.document_id),
+                            "content": item.content,
+                        }
+                        for item in evidence
+                    ],
                 },
             ),
             permissions=frozenset(permissions),
@@ -173,23 +181,6 @@ class VoiceOrchestrationContextFactory:
             timezone=voice_session.timezone,
             locale=voice_session.locale,
         )
-
-    @staticmethod
-    def _context_text(
-        transcript: str,
-        evidence: tuple[RetrievedKnowledge, ...],
-    ) -> str:
-        if not evidence:
-            return transcript
-        rendered = "\n\n".join(
-            f"[evidence:{item.evidence_id}] {item.content}"
-            for item in evidence
-        )
-        return (
-            f"{transcript}\n\nApproved workspace context follows. Cite "
-            f"evidence IDs for factual claims:\n{rendered}"
-        )
-
 
 class VoiceGatewayFactory:
     def __init__(

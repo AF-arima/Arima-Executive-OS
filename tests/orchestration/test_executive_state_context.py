@@ -136,7 +136,7 @@ def test_focus_question_uses_bounded_persisted_executive_state() -> None:
 
             result = await OrchestrationFactory(session).create().execute(context)
 
-            assert "EXECUTIVE STATE" in result.final_response
+            assert '"executive_state"' in result.final_response
             assert "Urgent persisted task" in result.final_response
             assert "High task due today" in result.final_response
             assert "Persisted priority project" in result.final_response
@@ -144,7 +144,7 @@ def test_focus_question_uses_bounded_persisted_executive_state() -> None:
             assert "persisted_research" in result.final_response
             assert "Persisted notification" in result.final_response
             assert "updated task" in result.final_response
-            assert "Persisted conversation memory" in result.final_response
+            assert "Persisted conversation memory" not in result.final_response
             assert "No persisted decision record available." in result.final_response
             assert "Portfolio state unavailable." in result.final_response
 

@@ -6,6 +6,7 @@ from app.core.config import Settings
 from app.providers import (
     InvalidModel,
     MockProvider,
+    GeminiProvider,
     OpenAIProvider,
     ProviderCapability,
     ProviderConfigurationError,
@@ -62,6 +63,9 @@ def test_factory_defaults_explicit_stubs_registry_and_model_validation() -> None
     health = asyncio.run(openai.health())
     assert health.status is ProviderStatus.UNAVAILABLE
     assert health.available is False
+    gemini = factory.create(provider=ProviderName.GEMINI)
+    assert isinstance(gemini, GeminiProvider)
+    assert asyncio.run(gemini.health()).available is False
 
     registry = factory.build_registry(tuple(ProviderName))
     assert len(registry.list()) == len(ProviderName)
@@ -69,6 +73,7 @@ def test_factory_defaults_explicit_stubs_registry_and_model_validation() -> None
         capabilities=frozenset({ProviderCapability.REASONING})
     )
     assert [provider.provider for provider in matches] == [
+        ProviderName.GEMINI,
         ProviderName.MOCK,
         ProviderName.NVIDIA,
         ProviderName.OPENAI,

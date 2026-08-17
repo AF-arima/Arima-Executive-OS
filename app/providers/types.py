@@ -9,6 +9,7 @@ class ProviderName(str, Enum):
     MOCK = "mock"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    GEMINI = "gemini"
     NVIDIA = "nvidia"
     OLLAMA = "ollama"
 
