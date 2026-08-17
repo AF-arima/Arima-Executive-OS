@@ -426,3 +426,69 @@ def test_founder_grant_rejects_inactive_agent_non_founder_and_missing_csrf(
         ).status_code
         == 403
     )
+
+
+def test_founder_voice_grant_target_is_founder_only_and_redacted(
+    management_context: AuthTestContext,
+    founder_allowlist: None,
+) -> None:
+    register_user(management_context, "founder@example.com")
+    register_user(management_context, "normal@example.com")
+    grant_role(management_context, "founder@example.com", "administrator")
+    workspace_id, _ = asyncio.run(
+        _create_agent_and_workspace_ids(
+            management_context,
+            actor_email="founder@example.com",
+        )
+    )
+
+    async def create_default_agent() -> UUID:
+        async with management_context.session_factory() as session:
+            founder = await session.scalar(
+                select(User).where(User.email == "founder@example.com")
+            )
+            assert founder is not None
+            agent = AgentDefinition(
+                slug=f"founder-default-{uuid4()}",
+                name="Founder Default Agent",
+                description="not returned",
+                system_instructions="not returned",
+                status=AgentStatus.ACTIVE,
+                version=1,
+                is_default=True,
+                created_by_id=founder.id,
+            )
+            session.add(agent)
+            await session.commit()
+            return agent.id
+
+    agent_id = asyncio.run(create_default_agent())
+    founder_headers = bearer(
+        login_user(management_context, "founder@example.com")["access_token"]
+    )
+    normal_headers = bearer(
+        login_user(management_context, "normal@example.com")["access_token"]
+    )
+
+    assert (
+        management_context.client.get(
+            "/api/v1/admin/founder/voice/grant-target",
+            headers=normal_headers,
+        ).status_code
+        == 403
+    )
+    response = management_context.client.get(
+        "/api/v1/admin/founder/voice/grant-target",
+        headers=founder_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "workspace_id": str(workspace_id),
+        "agent_id": str(agent_id),
+        "agent_name": "Founder Default Agent",
+        "agent_status": "active",
+    }
+    assert not {"description", "system_instructions", "email", "token", "secret"}.intersection(
+        response.json()
+    )

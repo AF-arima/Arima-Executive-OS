@@ -72,6 +72,13 @@ class FounderWorkspaceAgentGrantRead(StrictSchema):
     status: Literal["active"] = "active"
 
 
+class FounderVoiceGrantTargetRead(StrictSchema):
+    workspace_id: UUID
+    agent_id: UUID
+    agent_name: str
+    agent_status: Literal["active"] = "active"
+
+
 class ManualObservationCreate(StrictSchema):
     source: str = Field(min_length=1, max_length=500)
     observed_at: datetime

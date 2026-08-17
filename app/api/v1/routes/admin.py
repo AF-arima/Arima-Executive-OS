@@ -10,13 +10,16 @@ from app.auth.dependencies import (
     require_platform_operator,
 )
 from app.auth.service import AuthenticationService
-from app.database.models import AuditAction, AuditEntity, User
+from app.database.models import AgentStatus, AuditAction, AuditEntity, User
+from app.database.repositories.agent import AgentDefinitionRepository
+from app.database.repositories.workspace import WorkspaceRepository
 from app.database.session import get_session
 from app.intelligence.access import AgentGrantService, IntelligenceAccessError
 from app.schemas.auth import CurrentUserResponse, RoleAssignmentRequest
 from app.schemas.founder import (
     FounderDataFeeds,
     FounderSystemHealth,
+    FounderVoiceGrantTargetRead,
     FounderWorkspaceAgentGrantRead,
     ManualObservationCreate,
     ManualObservationRead,
@@ -105,6 +108,28 @@ async def founder_voice_authorization_diagnostic(
     return await VoiceAuthorizationDiagnosticService(session).inspect(
         session_id,
         operator=current_user,
+    )
+
+
+@router.get(
+    "/founder/voice/grant-target",
+    response_model=FounderVoiceGrantTargetRead,
+)
+async def founder_voice_grant_target(
+    session: SessionDependency,
+    current_user: FounderControlUser,
+) -> FounderVoiceGrantTargetRead:
+    workspace = await WorkspaceRepository(session).get_by_owner(current_user.id)
+    agent = await AgentDefinitionRepository(session).get_active_default()
+    if workspace is None or agent is None or agent.status is not AgentStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Voice grant target is unavailable",
+        )
+    return FounderVoiceGrantTargetRead(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        agent_name=agent.name,
     )
 
 
