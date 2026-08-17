@@ -121,6 +121,7 @@ def test_gemini_missing_credentials_is_unavailable_and_factory_registers_it() ->
         {
             "default_provider": "gemini",
             "default_model": MODEL,
+            "gemini_model": MODEL,
             "gemini_api_key": SecretStr("test-gemini-secret"),
         }
     )

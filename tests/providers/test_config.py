@@ -41,6 +41,9 @@ def test_settings_support_provider_environment_variables(
     assert platform.default_model == "deterministic-test-model"
     assert platform.for_provider(ProviderName.OPENAI).api_key is not None
     assert platform.for_provider(ProviderName.GEMINI).api_key is not None
+    assert platform.for_provider(ProviderName.GEMINI).default_model == (
+        "gemini-3.6-flash"
+    )
     assert (
         platform.for_provider(ProviderName.OLLAMA).base_url
         == "http://localhost:9999"

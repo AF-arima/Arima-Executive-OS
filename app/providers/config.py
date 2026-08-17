@@ -41,13 +41,14 @@ class ProviderPlatformConfig:
         def build(
             provider: ProviderName,
             *,
+            model: str | None = None,
             api_key: SecretStr | None = None,
             base_url: str | None = None,
             capabilities: ProviderCapabilities = ProviderCapabilities(),
         ) -> ProviderConfig:
             return ProviderConfig(
                 provider=provider,
-                default_model=settings.default_model,
+                default_model=model or settings.default_model,
                 max_model_tokens=settings.max_model_tokens,
                 default_temperature=settings.default_temperature,
                 max_output_tokens=settings.max_output_tokens,
@@ -83,6 +84,7 @@ class ProviderPlatformConfig:
             ),
             ProviderName.GEMINI: build(
                 ProviderName.GEMINI,
+                model=settings.gemini_model,
                 api_key=settings.gemini_api_key,
                 capabilities=ProviderCapabilities(
                     streaming=True,

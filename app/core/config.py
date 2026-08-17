@@ -166,6 +166,11 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
+    gemini_model: str = Field(
+        default="gemini-3.6-flash",
+        min_length=1,
+        max_length=200,
+    )
     nvidia_api_key: SecretStr | None = None
     ollama_url: str = "http://localhost:11434"
     default_provider: Literal[
