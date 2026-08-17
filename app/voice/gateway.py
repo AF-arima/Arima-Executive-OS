@@ -160,21 +160,8 @@ class VoiceGateway:
             session_id, actor.id, transcript
         )
         if claimed is None:
-            current = await self.sessions.get(session_id, actor.id, refresh=True)
-            if current.state in {
-                VoiceState.PROCESSING,
-                VoiceState.THINKING,
-                VoiceState.TOOL_EXECUTION,
-                VoiceState.AWAITING_APPROVAL,
-            }:
-                raise VoiceSessionBusy(
-                    "A transcript is already being processed for this session"
-                )
-            session = await self.sessions.update(
-                session_id,
-                actor.id,
-                state=VoiceState.PROCESSING,
-                transcript=transcript,
+            raise VoiceSessionBusy(
+                "A transcript is already being processed for this session"
             )
         else:
             session = claimed

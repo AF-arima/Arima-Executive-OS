@@ -9,6 +9,7 @@ from app.database.repositories import UserRepository, WorkspaceRepository
 from app.intelligence.access import AgentGrantService
 from app.core.config import get_settings
 from app.services.agent_bootstrap import bootstrap_agent_platform
+from app.voice.session import VoiceSessionStore
 from app.voice.state import VoiceState
 from tests.auth.helpers import bearer, login_user, register_user
 from tests.management.conftest import management_context
@@ -160,6 +161,37 @@ def test_active_transcript_returns_conflict_instead_of_internal_error(
             await session.commit()
 
     asyncio.run(mark_thinking())
+    response = management_context.client.post(
+        f"/api/v1/voice/sessions/{session_id}/transcript",
+        json={"transcript": "Open Portfolio"},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "A transcript is already being processed for this session"
+    }
+
+
+def test_unclaimed_transcript_returns_conflict_without_state_fallback(
+    management_context, monkeypatch
+) -> None:
+    email = "voice-unclaimed-transcript@example.com"
+    register_user(management_context, email)
+    configure_default_voice_agent(management_context, email, grant=True)
+    tokens = login_user(management_context, email)
+    headers = bearer(tokens["access_token"])
+    created = management_context.client.post(
+        "/api/v1/voice/sessions", json={}, headers=headers
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    async def do_not_claim(self, session_id, user_id, transcript):
+        del self, session_id, user_id, transcript
+        return None
+
+    monkeypatch.setattr(VoiceSessionStore, "claim_transcript", do_not_claim)
     response = management_context.client.post(
         f"/api/v1/voice/sessions/{session_id}/transcript",
         json={"transcript": "Open Portfolio"},
