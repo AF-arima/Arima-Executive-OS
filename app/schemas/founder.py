@@ -66,6 +66,12 @@ class FounderDataFeeds(StrictSchema):
     feeds: list[FounderDataFeed]
 
 
+class FounderWorkspaceAgentGrantRead(StrictSchema):
+    workspace_id: UUID
+    agent_id: UUID
+    status: Literal["active"] = "active"
+
+
 class ManualObservationCreate(StrictSchema):
     source: str = Field(min_length=1, max_length=500)
     observed_at: datetime

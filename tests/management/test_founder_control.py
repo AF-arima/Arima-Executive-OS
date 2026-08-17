@@ -1,11 +1,24 @@
 import asyncio
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.database.models import AuditEntity, AuditLog, DataFeedObservation
+from app.database.models import (
+    AgentDefinition,
+    AgentStatus,
+    AuditAction,
+    AuditEntity,
+    AuditLog,
+    DataFeedObservation,
+    User,
+    Workspace,
+    WorkspaceAgentGrant,
+    WorkspaceMembership,
+)
 from tests.auth.conftest import AuthTestContext
 from tests.auth.helpers import (
     bearer,
@@ -177,3 +190,239 @@ def test_founder_data_feed_state_uses_provenance_not_simulated_results(
     assert feeds["quant_research"]["freshness"] == "unavailable"
     assert feeds["quant_research"]["last_updated_at"] is None
     assert feeds["quant_research"]["manual_entry_supported"] is True
+
+
+async def _create_agent_and_workspace_ids(
+    context: AuthTestContext,
+    *,
+    actor_email: str,
+    status: AgentStatus = AgentStatus.ACTIVE,
+) -> tuple[UUID, UUID]:
+    async with context.session_factory() as session:
+        actor = await session.scalar(select(User).where(User.email == actor_email))
+        assert actor is not None
+        workspace = await session.scalar(
+            select(Workspace).where(Workspace.owner_id == actor.id)
+        )
+        assert workspace is not None
+        agent = AgentDefinition(
+            slug=f"founder-grant-{uuid4()}",
+            name="Founder Grant Test Agent",
+            description=None,
+            system_instructions="Test agent",
+            status=status,
+            version=1,
+            is_default=False,
+            created_by_id=actor.id,
+        )
+        session.add(agent)
+        await session.commit()
+        return workspace.id, agent.id
+
+
+def _founder_grant_endpoint(workspace_id: UUID, agent_id: UUID) -> str:
+    return (
+        "/api/v1/admin/founder/workspaces/"
+        f"{workspace_id}/agents/{agent_id}/grant"
+    )
+
+
+def test_founder_can_grant_active_agent_and_audit_it(
+    management_context: AuthTestContext,
+    founder_allowlist: None,
+) -> None:
+    register_user(management_context, "founder@example.com")
+    grant_role(management_context, "founder@example.com", "administrator")
+    workspace_id, agent_id = asyncio.run(
+        _create_agent_and_workspace_ids(
+            management_context,
+            actor_email="founder@example.com",
+        )
+    )
+    headers = {
+        **bearer(login_user(management_context, "founder@example.com")["access_token"]),
+        **csrf_headers(management_context),
+    }
+
+    response = management_context.client.post(
+        _founder_grant_endpoint(workspace_id, agent_id),
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert set(response.json()) == {"workspace_id", "agent_id", "status"}
+    assert response.json()["workspace_id"] == str(workspace_id)
+    assert response.json()["agent_id"] == str(agent_id)
+    assert response.json()["status"] == "active"
+    assert not {"granted_by", "revoked_at", "secret", "token"}.intersection(
+        response.json()
+    )
+
+    async def audit_row() -> AuditLog | None:
+        async with management_context.session_factory() as session:
+            return await session.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity == AuditEntity.AUTOMATION,
+                    AuditLog.action == AuditAction.ASSIGNMENT,
+                    AuditLog.entity_id.in_(
+                        select(WorkspaceAgentGrant.id).where(
+                            WorkspaceAgentGrant.workspace_id == workspace_id,
+                            WorkspaceAgentGrant.agent_id == agent_id,
+                        )
+                    ),
+                )
+                .order_by(AuditLog.timestamp.desc())
+            )
+
+    assert asyncio.run(audit_row()) is not None
+
+
+def test_founder_grant_restores_revoked_grant(
+    management_context: AuthTestContext,
+    founder_allowlist: None,
+) -> None:
+    register_user(management_context, "founder@example.com")
+    grant_role(management_context, "founder@example.com", "administrator")
+    workspace_id, agent_id = asyncio.run(
+        _create_agent_and_workspace_ids(
+            management_context,
+            actor_email="founder@example.com",
+        )
+    )
+    headers = {
+        **bearer(login_user(management_context, "founder@example.com")["access_token"]),
+        **csrf_headers(management_context),
+    }
+    endpoint = _founder_grant_endpoint(workspace_id, agent_id)
+    assert management_context.client.post(endpoint, headers=headers).status_code == 200
+
+    async def revoke_for_setup() -> None:
+        async with management_context.session_factory() as session:
+            grant = await session.scalar(
+                select(WorkspaceAgentGrant).where(
+                    WorkspaceAgentGrant.workspace_id == workspace_id,
+                    WorkspaceAgentGrant.agent_id == agent_id,
+                )
+            )
+            assert grant is not None
+            grant.revoked_at = datetime.now(UTC)
+            await session.commit()
+
+    asyncio.run(revoke_for_setup())
+    assert management_context.client.post(endpoint, headers=headers).status_code == 200
+
+    async def assert_restored() -> None:
+        async with management_context.session_factory() as session:
+            grant = await session.scalar(
+                select(WorkspaceAgentGrant).where(
+                    WorkspaceAgentGrant.workspace_id == workspace_id,
+                    WorkspaceAgentGrant.agent_id == agent_id,
+                )
+            )
+            assert grant is not None
+            assert grant.revoked_at is None
+
+    asyncio.run(assert_restored())
+
+
+def test_founder_grant_rejects_non_owner_and_cross_workspace(
+    management_context: AuthTestContext,
+    founder_allowlist: None,
+) -> None:
+    register_user(management_context, "founder@example.com")
+    register_user(management_context, "workspace-owner@example.com")
+    grant_role(management_context, "founder@example.com", "administrator")
+    owner_workspace_id, agent_id = asyncio.run(
+        _create_agent_and_workspace_ids(
+            management_context,
+            actor_email="workspace-owner@example.com",
+        )
+    )
+    founder_workspace_id, _ = asyncio.run(
+        _create_agent_and_workspace_ids(
+            management_context,
+            actor_email="founder@example.com",
+        )
+    )
+    founder_headers = {
+        **bearer(login_user(management_context, "founder@example.com")["access_token"]),
+        **csrf_headers(management_context),
+    }
+
+    assert (
+        management_context.client.post(
+            _founder_grant_endpoint(owner_workspace_id, agent_id),
+            headers=founder_headers,
+        ).status_code
+        == 403
+    )
+
+    async def add_non_owner_membership() -> None:
+        async with management_context.session_factory() as session:
+            founder = await session.scalar(
+                select(User).where(User.email == "founder@example.com")
+            )
+            assert founder is not None
+            session.add(
+                WorkspaceMembership(
+                    workspace_id=owner_workspace_id,
+                    user_id=founder.id,
+                    role="member",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(add_non_owner_membership())
+    assert (
+        management_context.client.post(
+            _founder_grant_endpoint(owner_workspace_id, agent_id),
+            headers=founder_headers,
+        ).status_code
+        == 403
+    )
+    assert founder_workspace_id != owner_workspace_id
+
+
+def test_founder_grant_rejects_inactive_agent_non_founder_and_missing_csrf(
+    management_context: AuthTestContext,
+    founder_allowlist: None,
+) -> None:
+    register_user(management_context, "founder@example.com")
+    register_user(management_context, "normal@example.com")
+    grant_role(management_context, "founder@example.com", "administrator")
+    workspace_id, inactive_agent_id = asyncio.run(
+        _create_agent_and_workspace_ids(
+            management_context,
+            actor_email="founder@example.com",
+            status=AgentStatus.DISABLED,
+        )
+    )
+    endpoint = _founder_grant_endpoint(workspace_id, inactive_agent_id)
+    founder_token = login_user(management_context, "founder@example.com")[
+        "access_token"
+    ]
+    assert (
+        management_context.client.post(
+            endpoint,
+            headers=bearer(founder_token),
+        ).status_code
+        == 403
+    )
+    assert (
+        management_context.client.post(
+            endpoint,
+            headers={**bearer(founder_token), **csrf_headers(management_context)},
+        ).status_code
+        == 403
+    )
+    normal_token = login_user(management_context, "normal@example.com")[
+        "access_token"
+    ]
+    assert (
+        management_context.client.post(
+            endpoint,
+            headers={**bearer(normal_token), **csrf_headers(management_context)},
+        ).status_code
+        == 403
+    )

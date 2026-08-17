@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.csrf import require_valid_csrf
@@ -10,17 +10,20 @@ from app.auth.dependencies import (
     require_platform_operator,
 )
 from app.auth.service import AuthenticationService
-from app.database.models import User
+from app.database.models import AuditAction, AuditEntity, User
 from app.database.session import get_session
+from app.intelligence.access import AgentGrantService, IntelligenceAccessError
 from app.schemas.auth import CurrentUserResponse, RoleAssignmentRequest
 from app.schemas.founder import (
     FounderDataFeeds,
     FounderSystemHealth,
+    FounderWorkspaceAgentGrantRead,
     ManualObservationCreate,
     ManualObservationRead,
 )
 from app.schemas.voice_diagnostic import VoiceAuthorizationDiagnostic
 from app.services.founder_control import FounderControlService
+from app.services.audit import record_audit
 from app.services.voice_authorization_diagnostic import (
     VoiceAuthorizationDiagnosticService,
 )
@@ -102,6 +105,44 @@ async def founder_voice_authorization_diagnostic(
     return await VoiceAuthorizationDiagnosticService(session).inspect(
         session_id,
         operator=current_user,
+    )
+
+
+@router.post(
+    "/founder/workspaces/{workspace_id}/agents/{agent_id}/grant",
+    response_model=FounderWorkspaceAgentGrantRead,
+    status_code=status.HTTP_200_OK,
+)
+async def founder_grant_workspace_agent(
+    workspace_id: UUID,
+    agent_id: UUID,
+    request: Request,
+    session: SessionDependency,
+    current_user: FounderControlUser,
+) -> FounderWorkspaceAgentGrantRead:
+    require_valid_csrf(request)
+    try:
+        grant = await AgentGrantService(session).grant(
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+            actor=current_user,
+        )
+    except IntelligenceAccessError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied",
+        ) from error
+    record_audit(
+        session,
+        actor_id=current_user.id,
+        action=AuditAction.ASSIGNMENT,
+        entity=AuditEntity.AUTOMATION,
+        entity_id=grant.id,
+    )
+    await session.commit()
+    return FounderWorkspaceAgentGrantRead(
+        workspace_id=grant.workspace_id,
+        agent_id=grant.agent_id,
     )
 
 
