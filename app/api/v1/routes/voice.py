@@ -41,6 +41,7 @@ def gateway(database: SessionDependency):
     return VoiceGatewayFactory(
         database,
         enabled=settings.arima_voice_enabled,
+        session_timeout_seconds=settings.arima_voice_session_timeout_seconds,
     ).create()
 
 

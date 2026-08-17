@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import VoiceSessionRecord
@@ -50,8 +51,18 @@ class VoiceSessionStore:
         await self.database.commit()
         return session
 
-    async def get(self, session_id: UUID, user_id: UUID) -> VoiceSession:
-        record = await self.database.get(VoiceSessionRecord, session_id)
+    async def get(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        *,
+        refresh: bool = False,
+    ) -> VoiceSession:
+        record = await self.database.get(
+            VoiceSessionRecord,
+            session_id,
+            populate_existing=refresh,
+        )
         if record is None:
             raise VoiceSessionNotFound("Voice session not found")
         session = self._to_schema(record)
@@ -84,6 +95,30 @@ class VoiceSessionStore:
             )
         await self.database.commit()
         return updated
+
+    async def recover_stale_thinking(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        *,
+        timeout: timedelta,
+    ) -> bool:
+        """Atomically move only an unchanged stale thinking session to error."""
+        now = self.clock()
+        cutoff = now - timeout
+        result = await self.database.execute(
+            update(VoiceSessionRecord)
+            .where(
+                VoiceSessionRecord.id == session_id,
+                VoiceSessionRecord.user_id == user_id,
+                VoiceSessionRecord.state == VoiceState.THINKING.value,
+                VoiceSessionRecord.updated_at < cutoff,
+            )
+            .values(state=VoiceState.ERROR.value, updated_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        await self.database.commit()
+        return int(getattr(result, "rowcount", 0) or 0) == 1
 
     @staticmethod
     def _to_record(session: VoiceSession) -> VoiceSessionRecord:

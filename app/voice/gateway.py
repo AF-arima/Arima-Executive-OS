@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
@@ -96,6 +96,7 @@ class VoiceGateway:
         orchestration: VoiceOrchestration,
         context_factory: ContextFactory,
         enabled: bool = True,
+        stale_session_timeout: timedelta = timedelta(minutes=30),
         experience_mapper: ExperienceEventMapper | None = None,
         conversation_resolver: ConversationResolver | None = None,
     ) -> None:
@@ -103,6 +104,7 @@ class VoiceGateway:
         self.orchestration = orchestration
         self.context_factory = context_factory
         self.enabled = enabled
+        self.stale_session_timeout = stale_session_timeout
         self.experience_mapper = experience_mapper or ExperienceEventMapper()
         self.conversation_resolver = conversation_resolver
 
@@ -134,6 +136,15 @@ class VoiceGateway:
         actor: User,
     ) -> VoiceGatewayResponse:
         session = await self.sessions.get(session_id, actor.id)
+        if session.state is VoiceState.THINKING:
+            await self.sessions.recover_stale_thinking(
+                session_id,
+                actor.id,
+                timeout=self.stale_session_timeout,
+            )
+            session = await self.sessions.get(
+                session_id, actor.id, refresh=True
+            )
         previous_response = session.response_text
         session = await self.sessions.update(
             session_id,

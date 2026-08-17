@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -197,10 +198,12 @@ class VoiceGatewayFactory:
         *,
         sessions: VoiceSessionStore | None = None,
         enabled: bool = True,
+        session_timeout_seconds: int = 1_800,
     ) -> None:
         self.database = database
         self.sessions = sessions or VoiceSessionStore(database)
         self.enabled = enabled
+        self.session_timeout_seconds = session_timeout_seconds
 
     def create(self) -> VoiceGateway:
         orchestration = OrchestrationFactory(self.database).create()
@@ -212,4 +215,7 @@ class VoiceGatewayFactory:
             context_factory=VoiceOrchestrationContextFactory(self.database),
             conversation_resolver=VoiceConversationResolver(self.database),
             enabled=self.enabled,
+            stale_session_timeout=timedelta(
+                seconds=self.session_timeout_seconds
+            ),
         )
