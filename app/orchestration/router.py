@@ -18,6 +18,14 @@ from app.providers.types import ProviderCapability
 class IntentEngine(HealthContract):
     component_name = "intent"
 
+    EXECUTIVE_FOCUS_PHRASES = (
+        "what should i focus on today",
+        "what are my priorities today",
+        "what needs my attention",
+        "what should i work on next",
+        "what are the most important things today",
+    )
+
     KEYWORDS = {
         OrchestrationIntent.PORTFOLIO: ("portfolio", "holdings"),
         OrchestrationIntent.QUANT: ("quant", "backtest", "signal"),
@@ -39,6 +47,11 @@ class IntentEngine(HealthContract):
             if any(keyword in content for keyword in keywords):
                 return intent
         return OrchestrationIntent.GENERAL
+
+    @classmethod
+    def is_executive_focus(cls, request: OrchestrationRequest) -> bool:
+        content = " ".join(request.content.casefold().split())
+        return any(phrase in content for phrase in cls.EXECUTIVE_FOCUS_PHRASES)
 
 
 class AgentRouter(HealthContract):

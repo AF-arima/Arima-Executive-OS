@@ -75,7 +75,7 @@ class OrchestrationFactory:
             provider_router=ProviderRouter(providers),
             model_router=ModelRouter(),
             optimizer=OrchestrationOptimizer(),
-            context_builder=OrchestrationContextBuilder(),
+            context_builder=OrchestrationContextBuilder(self.session),
             memory=OrchestrationMemory(MemoryService(self.session)),
             planner=OrchestrationPlanner(self.policy),
             approval=OrchestrationApprovalEngine(

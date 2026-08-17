@@ -267,6 +267,29 @@ class BackgroundExecutionService:
         )
         return list(rows.all())
 
+    async def list_active_for_user(
+        self,
+        user_id: UUID,
+        *,
+        limit: int,
+    ) -> list[BackgroundJobSchedule]:
+        """Return a bounded list of a user's active persisted schedules."""
+        rows = await self.session.scalars(
+            select(BackgroundJobSchedule)
+            .where(
+                BackgroundJobSchedule.user_id == user_id,
+                BackgroundJobSchedule.enabled.is_(True),
+                BackgroundJobSchedule.paused.is_(False),
+                BackgroundJobSchedule.cancelled_at.is_(None),
+            )
+            .order_by(
+                BackgroundJobSchedule.next_run_at.asc().nulls_last(),
+                BackgroundJobSchedule.id.asc(),
+            )
+            .limit(limit)
+        )
+        return list(rows.all())
+
     async def execute_due_jobs(
         self, context_factory: ContextFactory
     ) -> list[BackgroundExecutionResult]:

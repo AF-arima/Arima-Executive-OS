@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from time import perf_counter
 
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import AuditAction, AuditEntity
 from app.orchestration.approval import OrchestrationApprovalEngine
 from app.orchestration.context import (
+    BuiltOrchestrationContext,
     OrchestrationContextBuilder,
     OrchestrationExecutionContext,
 )
@@ -111,8 +113,8 @@ class OrchestrationPipeline(HealthContract):
                 f"profile={profile.value}",
             ],
         )
-        self.context_builder.build(context, memories=[])
         memories = await self.memory.optimise_context(context)
+        executive_state = await self.context_builder.resolve_executive_state(context)
         plan = self.planner.plan(intent, context.request.content)
         approved_steps = frozenset(
             str(item)
@@ -124,7 +126,10 @@ class OrchestrationPipeline(HealthContract):
         self.approval.require(approvals)
         actions, retries = await self.executor.execute(plan, context)
         built = self.context_builder.build(
-            context, memories=memories, actions=actions
+            context,
+            memories=memories,
+            actions=actions,
+            executive_state=executive_state,
         )
         response, provider_retries = await self.fallback.retry(
             lambda: provider.complete(
@@ -139,7 +144,7 @@ class OrchestrationPipeline(HealthContract):
                         ),
                         ProviderMessage(
                             role=MessageRole.USER,
-                            content=self._response_prompt(context, actions),
+                            content=self._response_prompt(context, built, actions),
                         ),
                     ),
                     max_output_tokens=context.request.max_output_tokens,
@@ -254,13 +259,26 @@ class OrchestrationPipeline(HealthContract):
     @staticmethod
     def _response_prompt(
         context: OrchestrationExecutionContext,
+        built: BuiltOrchestrationContext,
         actions: list[ExecutedAction],
     ) -> str:
+        sections = []
+        if built.executive_state is not None:
+            sections.append(
+                "EXECUTIVE STATE\n"
+                + json.dumps(
+                    built.executive_state,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+        if built.memories:
+            sections.append("MEMORY\n" + "\n".join(built.memories))
         summaries = [
             f"{action.name}={action.output}" for action in actions
         ]
-        return context.request.content + (
-            "\nExecution results:\n" + "\n".join(summaries)
-            if summaries
-            else ""
-        )
+        if summaries:
+            sections.append("EXECUTION RESULTS\n" + "\n".join(summaries))
+        sections.append("USER REQUEST\n" + context.request.content)
+        return "\n\n".join(sections)
