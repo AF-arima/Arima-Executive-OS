@@ -109,10 +109,18 @@ class AlphaVantageProvider(MarketDataProvider):
                 "alpha_vantage_instrument_unsupported",
             )
         mapping = next(
-            item
-            for item in self.configuration.mappings
-            if item.canonical is canonical
+            (
+                item
+                for item in self.configuration.mappings
+                if item.canonical is canonical
+            ),
+            None,
         )
+        if mapping is None:
+            raise _AlphaVantageUnavailable(
+                VerificationState.SYMBOL_UNVERIFIED,
+                "alpha_vantage_instrument_unsupported",
+            )
         key = self.configuration.api_key
         if key is None or not key.get_secret_value().strip():
             raise _AlphaVantageUnavailable(

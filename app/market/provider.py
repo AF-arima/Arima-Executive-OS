@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.market.config import (
     CanonicalInstrument,
+    CONFIGURED_CANONICAL_INSTRUMENTS,
     MarketDataConfiguration,
     MarketDataProviderName,
     MarketDataSource,
@@ -198,7 +199,7 @@ class MarketDataProvider(ABC):
         api_key = self.configuration.api_key
         if api_key is None or not api_key.get_secret_value().strip():
             issues.append("provider_credentials_missing")
-        if len(self.configuration.mappings) != len(CanonicalInstrument):
+        if len(self.configuration.mappings) != len(CONFIGURED_CANONICAL_INSTRUMENTS):
             issues.append("instrument_mappings_incomplete")
         return ProviderConfigurationHealth(
             provider=self.name,

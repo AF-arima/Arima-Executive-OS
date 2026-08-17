@@ -10,13 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.market import (
     CanonicalInstrument,
-    MarketDataConsumer,
-    MarketDataService,
+    MarketDataGateway,
     MarketDataUnavailableError,
-    MarketVerificationService,
-    TwelveDataProvider,
-    AlphaVantageProvider,
-    get_market_data_configuration,
+    get_market_data_configurations,
 )
 from app.tools.base import InternalToolAdapter
 from app.tools.context import ToolExecutionContext
@@ -64,7 +60,7 @@ class RuntimeDateTool(InternalToolAdapter):
 
 class MarketPriceTool(InternalToolAdapter):
     name = "market.current_price"
-    description = "Return an entitlement-verified current BTC/USD or XAU/USD price."
+    description = "Return an entitlement-verified current market price for a resolved instrument."
     category = ToolCategory.MARKET_DATA
     tool_capabilities = frozenset({ToolCapability.READ})
     input_model = MarketPriceInput
@@ -74,34 +70,27 @@ class MarketPriceTool(InternalToolAdapter):
 
     async def execute(self, payload: BaseModel, context: ToolExecutionContext) -> Any:
         request = MarketPriceInput.model_validate(payload)
-        configuration = get_market_data_configuration()
-        provider = (
-            AlphaVantageProvider(configuration)
-            if configuration.provider.value == "alpha_vantage"
-            else TwelveDataProvider(configuration)
-        )
-        verification, _ = await MarketVerificationService(self.session).verify_and_record(
-            provider, run_id=context.run.id
-        )
-        price, provenance = await provider.current_price(request.instrument)
+        configurations = get_market_data_configurations()
         workspace_id = context.conversation.metadata_.get("workspace_id")
         if not isinstance(workspace_id, str):
             raise MarketDataUnavailableError("Market workspace context is unavailable")
-        snapshot = await MarketDataService(self.session, configuration).snapshot_for(
-            user=context.current_user,
-            workspace_id=UUID(workspace_id),
-            consumer=MarketDataConsumer.LEADERSHIP,
-            verification=verification,
-            provenance=provenance,
-            now=provenance.received_at,
-            customer_display=True,
+        result = await MarketDataGateway(self.session, configurations).current_price(
+            canonical=request.instrument, user=context.current_user,
+            workspace_id=UUID(workspace_id), run_id=context.run.id,
         )
+        price, snapshot, provenance = result.price, result.snapshot, result.provenance
         evidence_id = str(uuid4())
         return {
             "instrument": request.instrument.value,
             "price": str(price),
             "currency": "USD",
             "provider": snapshot.provider.value,
+            "source": snapshot.source.value,
+            "provider_symbol": provenance.provider_symbol,
+            "exchange": provenance.exchange,
+            "freshness": snapshot.freshness.value,
+            "verification_state": snapshot.status.value,
+            "entitlement_state": "customer_display",
             "observed_at": snapshot.as_of.isoformat(),
             "evidence": {
                 "evidence_id": evidence_id,

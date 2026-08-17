@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     )
     market_data_provider: Literal["twelve_data", "alpha_vantage"] = "twelve_data"
     market_data_source: Literal["twelve_data", "alpha_vantage"] = "twelve_data"
+    market_data_fallback_providers: list[Literal["twelve_data", "alpha_vantage"]] = Field(default_factory=list)
     market_data_account_plan: Literal[
         "basic",
         "grow",

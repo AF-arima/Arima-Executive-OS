@@ -45,6 +45,31 @@ class CanonicalInstrument(StrEnum):
     XAUUSD = "XAUUSD"
     BTCUSD = "BTCUSD"
     SPX = "SPX"
+    ETHUSD = "ETHUSD"
+    XAGUSD = "XAGUSD"
+    WTIUSD = "WTIUSD"
+    BCOUSD = "BCOUSD"
+    HGUSD = "HGUSD"
+    EURUSD = "EURUSD"
+    GBPUSD = "GBPUSD"
+    USDJPY = "USDJPY"
+    AAPL = "AAPL"
+    MSFT = "MSFT"
+    TSLA = "TSLA"
+    NDX = "NDX"
+    FTSE100 = "FTSE100"
+    DAX = "DAX"
+    SPY = "SPY"
+
+
+# Existing provider configurations deliberately verify this small, configured
+# set. The resolver may identify a broader canonical universe, but an adapter
+# must still have an explicit verified mapping before it can return a quote.
+CONFIGURED_CANONICAL_INSTRUMENTS = frozenset({
+    CanonicalInstrument.XAUUSD,
+    CanonicalInstrument.BTCUSD,
+    CanonicalInstrument.SPX,
+})
 
 
 class TwelveDataInstrumentType(StrEnum):
@@ -108,7 +133,9 @@ class InstrumentMapping(BaseModel):
     def validate_mapping_contract(self) -> "InstrumentMapping":
         if self.source.value != self.provider.value:
             raise ValueError("The source must match the selected provider")
-        expected_type = EXPECTED_INSTRUMENT_TYPES[self.canonical]
+        expected_type = EXPECTED_INSTRUMENT_TYPES.get(self.canonical)
+        if expected_type is None:
+            raise ValueError("Instrument mapping is not configured for this canonical instrument")
         if self.instrument_type is not expected_type:
             raise ValueError(
                 f"Invalid instrument type for {self.canonical.value}"
@@ -185,7 +212,7 @@ class MarketDataConfiguration(BaseModel):
         if self.source.value != self.provider.value:
             raise ValueError("Market data provider and source must match")
         canonicals = [mapping.canonical for mapping in self.mappings]
-        if set(canonicals) != set(CanonicalInstrument):
+        if set(canonicals) != CONFIGURED_CANONICAL_INSTRUMENTS:
             raise ValueError("Mappings must cover XAUUSD, BTCUSD, and SPX exactly")
         if len(canonicals) != len(set(canonicals)):
             raise ValueError("Canonical instrument mappings must be unique")
@@ -236,9 +263,11 @@ class MarketDataConfiguration(BaseModel):
         return self
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "MarketDataConfiguration":
-        provider = MarketDataProviderName(settings.market_data_provider)
-        source = MarketDataSource(settings.market_data_source)
+    def from_settings(cls, settings: Settings, *, provider_name: MarketDataProviderName | None = None) -> "MarketDataConfiguration":
+        provider = provider_name or MarketDataProviderName(settings.market_data_provider)
+        # A source identifies the adapter actually used. Fallback adapters
+        # therefore cannot inherit the primary provider's source label.
+        source = MarketDataSource(provider.value)
         return cls(
             provider=provider,
             source=source,
@@ -337,3 +366,10 @@ class MarketDataConfiguration(BaseModel):
 @lru_cache
 def get_market_data_configuration() -> MarketDataConfiguration:
     return MarketDataConfiguration.from_settings(get_settings())
+
+
+def get_market_data_configurations() -> tuple[MarketDataConfiguration, ...]:
+    settings = get_settings()
+    primary = MarketDataProviderName(settings.market_data_provider)
+    names = (primary, *(MarketDataProviderName(item) for item in settings.market_data_fallback_providers if item != primary.value))
+    return tuple(MarketDataConfiguration.from_settings(settings, provider_name=name) for name in names)

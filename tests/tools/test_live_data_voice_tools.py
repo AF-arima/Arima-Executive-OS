@@ -31,6 +31,14 @@ from tests.tools.helpers import make_context
         ("What’s the price of gold?", "market.current_price", {"instrument": "XAUUSD"}),
         ("What’s the weather like today?", "weather.current", {"location": None}),
         ("What’s the weather like in London today?", "weather.current", {"location": "London"}),
+        ("What’s the weather like today in London?", "weather.current", {"location": "London"}),
+        ("What is the price of ETH?", "market.current_price", {"instrument": "ETHUSD"}),
+        ("What’s WTI doing?", "market.current_price", {"instrument": "WTIUSD"}),
+        ("What’s Apple trading at?", "market.current_price", {"instrument": "AAPL"}),
+        ("What’s FTSE 100?", "market.current_price", {"instrument": "FTSE100"}),
+        ("What day is today?", "runtime.current_date", {}),
+        ("What is today’s date?", "runtime.current_date", {}),
+        ("What date is it?", "runtime.current_date", {}),
         ("What day is today and what is the date?", "runtime.current_date", {}),
     ],
 )
@@ -42,6 +50,14 @@ def test_production_voice_phrases_select_live_data_tools(
     plan = OrchestrationPlanner().plan(OrchestrationIntent.GENERAL, transcript)
     assert plan.steps[0].name == tool_name
     assert plan.steps[0].payload == payload
+
+
+def test_ambiguous_oil_and_unknown_instruments_do_not_trigger_provider_access() -> None:
+    from app.orchestration.schemas import OrchestrationIntent
+
+    planner = OrchestrationPlanner()
+    assert planner.plan(OrchestrationIntent.GENERAL, "What is oil doing?").steps[0].name == "assemble"
+    assert planner.plan(OrchestrationIntent.GENERAL, "What is ImaginaryCoin trading at?").steps[0].name == "assemble"
 
 
 def test_live_question_planning_and_evidence_for_gemini() -> None:

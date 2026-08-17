@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import re
 
 from app.orchestration.health import HealthContract
+from app.market.instruments import InstrumentResolver
 from app.orchestration.policy import OrchestrationPolicy
 from app.orchestration.schemas import (
     ExecutionPlan,
@@ -75,32 +76,33 @@ class OrchestrationPlanner(HealthContract):
     @staticmethod
     def _live_data_step(content: str) -> PlanStep | None:
         value = content.casefold()
-        if "date" in value and ("day" in value or "today" in value):
+        resolved = InstrumentResolver().resolve(content)
+        if resolved is not None and any(term in value for term in (
+            "price", "worth", "quote", "trading", "doing", "how much", "what is", "what's", "what’s", "right now", "current",
+        )):
+            return PlanStep(
+                target=PlanTarget.TOOL,
+                name="market.current_price",
+                payload={"instrument": resolved.canonical.value},
+            )
+        if "weather" in value:
+            match = re.search(
+                r"\b(?:in|at|for)\s+([a-z][a-z .,'-]{1,100})",
+                content,
+                re.IGNORECASE,
+            )
+            location = match.group(1).strip(" .,?!") if match else None
+            if location is not None:
+                location = re.sub(
+                    r"\s+\b(?:today|now|currently|right now)\b.*$",
+                    "",
+                    location,
+                    flags=re.IGNORECASE,
+                ).strip(" .,?!") or None
+            return PlanStep(target=PlanTarget.TOOL, name="weather.current", payload={"location": location})
+        if "date" in value or ("day" in value and "today" in value):
             return PlanStep(
                 target=PlanTarget.TOOL,
                 name="runtime.current_date",
             )
-        if any(term in value for term in ("bitcoin", "btc")) and any(
-            term in value for term in ("price", "worth", "quote")
-        ):
-            return PlanStep(target=PlanTarget.TOOL, name="market.current_price", payload={"instrument": "BTCUSD"})
-        if any(term in value for term in ("gold", "xau")) and any(
-            term in value for term in ("price", "worth", "quote")
-        ):
-            return PlanStep(target=PlanTarget.TOOL, name="market.current_price", payload={"instrument": "XAUUSD"})
-        if "weather" not in value:
-            return None
-        match = re.search(
-            r"\b(?:in|at|for)\s+([a-z][a-z .,'-]{1,100})",
-            content,
-            re.IGNORECASE,
-        )
-        location = match.group(1).strip(" .,?!") if match else None
-        if location is not None:
-            location = re.sub(
-                r"\s+\b(?:today|now|currently|right now)\b.*$",
-                "",
-                location,
-                flags=re.IGNORECASE,
-            ).strip(" .,?!") or None
-        return PlanStep(target=PlanTarget.TOOL, name="weather.current", payload={"location": location})
+        return None

@@ -8,7 +8,10 @@ from app.market.config import (
     MarketDataUsageScope,
     TwelveDataInstrumentType,
     get_market_data_configuration,
+    get_market_data_configurations,
 )
+from app.market.gateway import MarketDataGateway, MarketDataGatewayResult, MarketDataProviderRegistry
+from app.market.instruments import AssetClass, CanonicalInstrumentRequest, InstrumentResolver, MarketDataField
 from app.market.provider import (
     EntitlementState,
     FreshnessState,
@@ -34,6 +37,8 @@ from app.market.verification import MarketVerificationService
 
 __all__ = (
     "CanonicalInstrument",
+    "CanonicalInstrumentRequest",
+    "AssetClass",
     "EntitlementState",
     "FreshnessState",
     "InstrumentMapping",
@@ -41,6 +46,10 @@ __all__ = (
     "MarketDataAccountPlan",
     "MarketDataAccessError",
     "MarketDataConfiguration",
+    "MarketDataGateway",
+    "MarketDataGatewayResult",
+    "MarketDataProviderRegistry",
+    "MarketDataField",
     "MarketDataConsumer",
     "MarketDataProvider",
     "MarketDataProviderName",
@@ -60,4 +69,6 @@ __all__ = (
     "AlphaVantageProvider",
     "VerificationState",
     "get_market_data_configuration",
+    "get_market_data_configurations",
+    "InstrumentResolver",
 )
