@@ -38,7 +38,7 @@ def test_every_internal_tool_exposes_contract_and_executes_structured() -> None:
                     context,
                 )
                 results.append(result)
-            assert len(results) == 23
+            assert len(results) == 26
             assert all(result.tool_version == "1.0.0" for result in results)
 
     asyncio.run(scenario())

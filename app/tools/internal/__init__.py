@@ -23,6 +23,9 @@ from app.tools.internal.catalog import (
     TaskSearchTool,
     TaskSummaryTool,
     UnreadNotificationsTool,
+    MarketPriceTool,
+    RuntimeDateTool,
+    WeatherTool,
 )
 
 __all__ = [
@@ -50,4 +53,7 @@ __all__ = [
     "TaskSearchTool",
     "TaskSummaryTool",
     "UnreadNotificationsTool",
+    "MarketPriceTool",
+    "RuntimeDateTool",
+    "WeatherTool",
 ]

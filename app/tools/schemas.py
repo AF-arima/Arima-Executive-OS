@@ -18,6 +18,9 @@ class ToolCategory(str, Enum):
     DASHBOARD = "dashboard"
     PORTFOLIO = "portfolio"
     HEALTH = "health"
+    MARKET_DATA = "market_data"
+    WEATHER = "weather"
+    RUNTIME = "runtime"
 
 
 class ToolCapability(str, Enum):

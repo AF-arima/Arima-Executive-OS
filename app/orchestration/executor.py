@@ -103,6 +103,10 @@ class OrchestrationExecutor(HealthContract):
                 ),
                 self._tool_context(context),
             )
+            if not tool_result.success:
+                raise RuntimeError(
+                    tool_result.failure or "Tool execution is unavailable"
+                )
             return tool_result.model_dump(mode="json")
         if step.target is PlanTarget.INTEGRATION:
             if step.operation is None:

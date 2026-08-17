@@ -1,11 +1,13 @@
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.market.config import (
+    CanonicalInstrument,
     InstrumentMapping,
     MarketDataConfiguration,
     MarketDataProviderName,
@@ -15,6 +17,7 @@ from app.market.provider import (
     FreshnessState,
     InstrumentVerification,
     MarketDataProvider,
+    MarketDataProvenance,
     ProviderVerification,
     VerificationState,
 )
@@ -72,7 +75,7 @@ class TwelveDataUsagePayload(BaseModel):
 
 
 class TwelveDataQuotePayload(BaseModel):
-    """Only identity and timestamp are retained from the quote response."""
+    """Identity, timestamp, and a server-only current price observation."""
 
     model_config = ConfigDict(extra="ignore", strict=True)
 
@@ -81,6 +84,7 @@ class TwelveDataQuotePayload(BaseModel):
     exchange: str
     currency: str
     timestamp: int = Field(gt=0)
+    close: str | None = None
 
 
 class TwelveDataProvider(MarketDataProvider):
@@ -517,4 +521,39 @@ class TwelveDataProvider(MarketDataProvider):
             account_plan_verified=True,
             provider_account_plan=usage_payload.plan_category,
             instruments=instrument_tuple,
+        )
+
+    async def current_price(self, canonical: CanonicalInstrument) -> tuple[Decimal, MarketDataProvenance]:
+        """Return one authenticated, identity-checked current observation."""
+        mapping = next((item for item in self.configuration.mappings if item.canonical is canonical), None)
+        if mapping is None or self.configuration.api_key is None:
+            raise RuntimeError("Market provider current price is unavailable")
+        headers = {"Authorization": "apikey " + self.configuration.api_key.get_secret_value()}
+        received_at = datetime.now(UTC)
+        try:
+            async with httpx.AsyncClient(
+                base_url=str(self.configuration.base_url).rstrip("/"), headers=headers,
+                timeout=httpx.Timeout(self.configuration.timeout_seconds), transport=self._transport,
+            ) as client:
+                response = await client.get("/quote", params={"symbol": mapping.provider_symbol, "exchange": mapping.exchange, "timezone": "UTC"})
+                response.raise_for_status()
+                quote = TwelveDataQuotePayload.model_validate(response.json())
+        except (httpx.HTTPError, ValueError, ValidationError) as error:
+            raise RuntimeError("Market provider current price is unavailable") from error
+        if (quote.symbol != mapping.provider_symbol or quote.name != mapping.expected_name
+                or quote.exchange.upper() != mapping.exchange or quote.currency != mapping.currency):
+            raise RuntimeError("Market provider quote identity is unverified")
+        if quote.close is None:
+            raise RuntimeError("Market provider current price is unavailable")
+        try:
+            price = Decimal(quote.close)
+        except Exception as error:
+            raise RuntimeError("Market provider current price is unavailable") from error
+        if price <= 0:
+            raise RuntimeError("Market provider current price is unavailable")
+        return price, MarketDataProvenance(
+            canonical=canonical, provider=self.name, source=self.source,
+            provider_symbol=mapping.provider_symbol, exchange=mapping.exchange,
+            provider_timestamp=datetime.fromtimestamp(quote.timestamp, UTC),
+            received_at=received_at, stale_after_seconds=self.configuration.stale_after_seconds,
         )

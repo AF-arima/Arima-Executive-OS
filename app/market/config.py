@@ -17,10 +17,12 @@ from app.core.config import Settings, get_settings
 
 class MarketDataProviderName(StrEnum):
     TWELVE_DATA = "twelve_data"
+    ALPHA_VANTAGE = "alpha_vantage"
 
 
 class MarketDataSource(StrEnum):
     TWELVE_DATA = "twelve_data"
+    ALPHA_VANTAGE = "alpha_vantage"
 
 
 class MarketDataAccountPlan(StrEnum):
@@ -104,18 +106,28 @@ class InstrumentMapping(BaseModel):
 
     @model_validator(mode="after")
     def validate_mapping_contract(self) -> "InstrumentMapping":
-        if self.provider is not MarketDataProviderName.TWELVE_DATA:
-            raise ValueError("Only the Twelve Data provider is supported")
-        if self.source is not MarketDataSource.TWELVE_DATA:
+        if self.source.value != self.provider.value:
             raise ValueError("The source must match the selected provider")
         expected_type = EXPECTED_INSTRUMENT_TYPES[self.canonical]
         if self.instrument_type is not expected_type:
             raise ValueError(
                 f"Invalid instrument type for {self.canonical.value}"
             )
-        expected_symbol, expected_exchange, expected_name, expected_currency = (
-            CANONICAL_IDENTITIES[self.canonical]
-        )
+        if self.provider is MarketDataProviderName.ALPHA_VANTAGE:
+            alpha_identities = {
+                CanonicalInstrument.BTCUSD: (
+                    "BTC", "ALPHA VANTAGE", "Bitcoin to US Dollar", "USD"
+                ),
+                CanonicalInstrument.XAUUSD: (
+                    "XAU", "ALPHA VANTAGE", "Gold Spot / US Dollar", "USD"
+                ),
+                CanonicalInstrument.SPX: (
+                    "SPX", "ALPHA VANTAGE", "S&P 500 Index", "USD"
+                ),
+            }
+            expected_symbol, expected_exchange, expected_name, expected_currency = alpha_identities[self.canonical]
+        else:
+            expected_symbol, expected_exchange, expected_name, expected_currency = CANONICAL_IDENTITIES[self.canonical]
         if (
             self.provider_symbol,
             self.exchange,
@@ -130,7 +142,7 @@ class InstrumentMapping(BaseModel):
             raise ValueError(
                 f"Invalid canonical identity for {self.canonical.value}"
             )
-        if self.canonical in {
+        if self.provider is MarketDataProviderName.TWELVE_DATA and self.canonical in {
             CanonicalInstrument.XAUUSD,
             CanonicalInstrument.BTCUSD,
         }:
@@ -143,7 +155,7 @@ class InstrumentMapping(BaseModel):
                 raise ValueError(
                     f"{self.canonical.value} must preserve its canonical pair"
                 )
-        elif not SINGLE_SYMBOL.fullmatch(self.provider_symbol):
+        elif self.provider is MarketDataProviderName.TWELVE_DATA and not SINGLE_SYMBOL.fullmatch(self.provider_symbol):
             raise ValueError("SPX must map to a valid single symbol")
         return self
 
@@ -188,7 +200,7 @@ class MarketDataConfiguration(BaseModel):
         if any(mapping.source is not self.source for mapping in self.mappings):
             raise ValueError("Every mapping must use the selected source")
         if self.base_url.scheme != "https":
-            raise ValueError("Twelve Data base URL must use HTTPS")
+            raise ValueError("Market data provider base URL must use HTTPS")
         reference = self.entitlement_reference
         has_reference = bool(
             reference is not None
@@ -246,14 +258,30 @@ class MarketDataConfiguration(BaseModel):
             entitlement_reference=(
                 settings.market_data_entitlement_reference
             ),
-            api_key=settings.twelve_data_api_key,
-            base_url=AnyHttpUrl(settings.twelve_data_base_url),
+            api_key=(
+                settings.alpha_vantage_api_key
+                if provider is MarketDataProviderName.ALPHA_VANTAGE
+                else settings.twelve_data_api_key
+            ),
+            base_url=AnyHttpUrl(
+                settings.alpha_vantage_base_url
+                if provider is MarketDataProviderName.ALPHA_VANTAGE
+                else settings.twelve_data_base_url
+            ),
             mappings=(
                 InstrumentMapping(
                     canonical=CanonicalInstrument.XAUUSD,
-                    provider_symbol=settings.market_data_xauusd_symbol,
+                    provider_symbol=(
+                        "XAU"
+                        if provider is MarketDataProviderName.ALPHA_VANTAGE
+                        else settings.market_data_xauusd_symbol
+                    ),
                     instrument_type=TwelveDataInstrumentType.COMMODITY,
-                    exchange=settings.market_data_xauusd_exchange,
+                    exchange=(
+                        "ALPHA VANTAGE"
+                        if provider is MarketDataProviderName.ALPHA_VANTAGE
+                        else settings.market_data_xauusd_exchange
+                    ),
                     expected_name="Gold Spot / US Dollar",
                     currency="USD",
                     provider=provider,
@@ -261,11 +289,19 @@ class MarketDataConfiguration(BaseModel):
                 ),
                 InstrumentMapping(
                     canonical=CanonicalInstrument.BTCUSD,
-                    provider_symbol=settings.market_data_btcusd_symbol,
+                    provider_symbol=(
+                        "BTC"
+                        if provider is MarketDataProviderName.ALPHA_VANTAGE
+                        else settings.market_data_btcusd_symbol
+                    ),
                     instrument_type=(
                         TwelveDataInstrumentType.DIGITAL_CURRENCY
                     ),
-                    exchange=settings.market_data_btcusd_exchange,
+                    exchange=(
+                        "ALPHA VANTAGE"
+                        if provider is MarketDataProviderName.ALPHA_VANTAGE
+                        else settings.market_data_btcusd_exchange
+                    ),
                     expected_name="Bitcoin to US Dollar",
                     currency="USD",
                     provider=provider,
@@ -273,9 +309,17 @@ class MarketDataConfiguration(BaseModel):
                 ),
                 InstrumentMapping(
                     canonical=CanonicalInstrument.SPX,
-                    provider_symbol=settings.market_data_spx_symbol,
+                    provider_symbol=(
+                        "SPX"
+                        if provider is MarketDataProviderName.ALPHA_VANTAGE
+                        else settings.market_data_spx_symbol
+                    ),
                     instrument_type=TwelveDataInstrumentType.INDEX,
-                    exchange=settings.market_data_spx_exchange,
+                    exchange=(
+                        "ALPHA VANTAGE"
+                        if provider is MarketDataProviderName.ALPHA_VANTAGE
+                        else settings.market_data_spx_exchange
+                    ),
                     expected_name="S&P 500 Index",
                     currency="USD",
                     provider=provider,

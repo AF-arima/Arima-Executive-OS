@@ -46,6 +46,11 @@ from app.tools.internal.common import (
     NotificationInput,
     SearchInput,
 )
+from app.tools.internal.live_data import (
+    MarketPriceTool,
+    RuntimeDateTool,
+    WeatherTool,
+)
 from app.tools.schemas import (
     ToolCapability,
     ToolCategory,
@@ -781,4 +786,7 @@ INTERNAL_TOOL_TYPES: tuple[type[InternalToolAdapter], ...] = (
     PortfolioAnalyticsTool,
     PlatformHealthTool,
     SystemStatusTool,
+    MarketPriceTool,
+    RuntimeDateTool,
+    WeatherTool,
 )

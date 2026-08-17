@@ -29,6 +29,7 @@ from app.market.service import (
     MarketSnapshotStatus,
 )
 from app.market.twelve_data import TwelveDataProvider
+from app.market.alpha_vantage import AlphaVantageProvider
 from app.market.verification import MarketVerificationService
 
 __all__ = (
@@ -56,6 +57,7 @@ __all__ = (
     "MarketSnapshotStatus",
     "TwelveDataInstrumentType",
     "TwelveDataProvider",
+    "AlphaVantageProvider",
     "VerificationState",
     "get_market_data_configuration",
 )

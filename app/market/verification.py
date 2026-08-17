@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,8 +17,8 @@ class MarketVerificationService:
         self._repository = MarketProviderVerificationRepository(session)
 
     async def verify_and_record(
-        self, provider: MarketDataProvider
+        self, provider: MarketDataProvider, *, run_id: UUID | None = None
     ) -> tuple[ProviderVerification, Sequence[MarketProviderVerification]]:
         verification = await provider.verify()
-        rows = await self._repository.record(verification)
+        rows = await self._repository.record(verification, run_id=run_id)
         return verification, rows

@@ -19,11 +19,11 @@ def test_factory_registers_all_internal_tools_and_supports_lookups() -> None:
     async def scenario() -> None:
         async with sqlite_session() as session:
             registry = ToolFactory(session).create_registry()
-            assert len(registry) == 23
+            assert len(registry) == 26
             assert registry.get("project.search").tool_version() == "1.0.0"
             assert len(registry.by_category(ToolCategory.CRM)) == 4
             assert len(registry.by_permission(ToolPermission.WRITE)) == 1
-            assert len(registry.by_version("1.0.0")) == 23
+            assert len(registry.by_version("1.0.0")) == 26
             assert len(
                 registry.by_capability(ToolCapability.ANALYTICS)
             ) == 5

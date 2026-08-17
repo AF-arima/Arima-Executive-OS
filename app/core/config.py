@@ -114,8 +114,8 @@ class Settings(BaseSettings):
         ge=1,
         le=3600,
     )
-    market_data_provider: Literal["twelve_data"] = "twelve_data"
-    market_data_source: Literal["twelve_data"] = "twelve_data"
+    market_data_provider: Literal["twelve_data", "alpha_vantage"] = "twelve_data"
+    market_data_source: Literal["twelve_data", "alpha_vantage"] = "twelve_data"
     market_data_account_plan: Literal[
         "basic",
         "grow",
@@ -136,6 +136,8 @@ class Settings(BaseSettings):
     market_data_entitlement_reference: SecretStr | None = None
     twelve_data_api_key: SecretStr | None = None
     twelve_data_base_url: str = "https://api.twelvedata.com"
+    alpha_vantage_api_key: SecretStr | None = None
+    alpha_vantage_base_url: str = "https://www.alphavantage.co"
     market_data_xauusd_symbol: str = Field(
         default="XAU/USD", min_length=3, max_length=50
     )

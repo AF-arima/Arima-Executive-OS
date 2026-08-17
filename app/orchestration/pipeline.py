@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from time import perf_counter
+from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +32,7 @@ from app.orchestration.schemas import (
     ModelProfile,
     OrchestrationIntent,
     OrchestrationResult,
+    ExecutedAction,
     RouteSelection,
     TelemetryRecord,
 )
@@ -128,6 +130,7 @@ class OrchestrationPipeline(HealthContract):
         )
         self.approval.require(approvals)
         actions, retries = await self.executor.execute(plan, context)
+        self._attach_live_tool_evidence(context, actions)
         built = self.context_builder.build(
             context,
             memories=memories,
@@ -267,3 +270,37 @@ class OrchestrationPipeline(HealthContract):
         if profile.value == "reasoning":
             required.add(ProviderCapability.REASONING)
         return frozenset(required)
+
+    @staticmethod
+    def _attach_live_tool_evidence(
+        context: OrchestrationExecutionContext,
+        actions: list[ExecutedAction],
+    ) -> None:
+        """Expose only explicitly shaped, verified tool evidence to providers."""
+        evidence = list(context.request.metadata.get("provider_evidence", []))
+        evidence_ids = list(context.request.metadata.get("evidence_ids", []))
+        for action in actions:
+            if action.name not in {
+                "market.current_price",
+                "weather.current",
+                "runtime.current_date",
+            }:
+                continue
+            if not action.success:
+                evidence_id = str(uuid4())
+                evidence.append({
+                    "evidence_id": evidence_id,
+                    "content": "The requested live data is unavailable from the verified server-side provider.",
+                })
+                evidence_ids.append(evidence_id)
+                continue
+            data = action.output.get("data")
+            item = data.get("evidence") if isinstance(data, dict) else None
+            if not isinstance(item, dict):
+                continue
+            evidence_id, content = item.get("evidence_id"), item.get("content")
+            if isinstance(evidence_id, str) and isinstance(content, str):
+                evidence.append({"evidence_id": evidence_id, "content": content})
+                evidence_ids.append(evidence_id)
+        context.request.metadata["provider_evidence"] = evidence
+        context.request.metadata["evidence_ids"] = evidence_ids

@@ -16,9 +16,9 @@ class MarketProviderVerificationRepository(
         super().__init__(MarketProviderVerification, session)
 
     async def record(
-        self, verification: ProviderVerification
+        self, verification: ProviderVerification, *, run_id: UUID | None = None
     ) -> Sequence[MarketProviderVerification]:
-        run_id = uuid4()
+        run_id = run_id or uuid4()
         rows = [
             MarketProviderVerification(
                 run_id=run_id,
