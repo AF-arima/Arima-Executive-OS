@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from app.database.models import (
+    AIWorkspaceRun,
     AgentMessage,
     AgentRun,
     AgentRunStatus,
@@ -114,6 +115,51 @@ async def test_voice_uses_existing_authorized_phase4_audit_chain() -> None:
         assert chain.workspace_id == seed.workspace.id
         assert chain.retrieved_context_ids
         assert chain.output_message_id == output.id
+
+
+@pytest.mark.asyncio
+async def test_voice_session_transcripts_receive_distinct_run_correlations() -> None:
+    async with sqlite_session() as database:
+        seed = await make_intelligence_context(database)
+        await AgentGrantService(database).grant(
+            workspace_id=seed.workspace.id,
+            agent_id=seed.agent.id,
+            actor=seed.user,
+        )
+        sessions = VoiceSessionStore(database)
+        gateway = VoiceGatewayFactory(database, sessions=sessions).create()
+        voice_session, _ = await gateway.create_session(
+            VoiceSessionCreate(conversation_id=seed.conversation.id),
+            seed.user,
+        )
+
+        first = await gateway.handle_transcript(
+            voice_session.session_id,
+            "Analyse the first strategic decision",
+            seed.user,
+        )
+        second = await gateway.handle_transcript(
+            voice_session.session_id,
+            "Analyse the second strategic decision",
+            seed.user,
+        )
+        bindings = (
+            await database.scalars(
+                select(AIWorkspaceRun).where(
+                    AIWorkspaceRun.workspace_id == seed.workspace.id,
+                    AIWorkspaceRun.user_id == seed.user.id,
+                    AIWorkspaceRun.channel == "voice",
+                )
+            )
+        ).all()
+        persisted_voice = await sessions.get(
+            voice_session.session_id, seed.user.id
+        )
+
+        assert len(bindings) == 2
+        assert len({binding.correlation_id for binding in bindings}) == 2
+        assert first.correlation_id != second.correlation_id
+        assert persisted_voice.correlation_id == second.correlation_id
 
 
 @pytest.mark.asyncio

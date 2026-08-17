@@ -122,7 +122,6 @@ class VoiceOrchestrationContextFactory:
             run=run,
             actor=actor,
             channel="voice",
-            correlation_id=voice_session.correlation_id,
         )
         run = await runs.start(run.id, actor)
         try:
