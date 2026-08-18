@@ -51,9 +51,29 @@ class MarketDataGateway:
         self.registry = registry or MarketDataProviderRegistry()
 
     async def current_price(self, *, canonical: CanonicalInstrument, user: User, workspace_id: UUID, run_id: UUID) -> MarketDataGatewayResult:
+        # This local gate is deliberately before registry/provider creation.
+        # An unauthorized request must never cause an upstream provider call.
+        await MarketDataService(
+            self.session, self.configurations[0]
+        ).authorize_request(
+            user=user,
+            workspace_id=workspace_id,
+            consumer=MarketDataConsumer.LEADERSHIP,
+            customer_display=True,
+        )
         failures: list[Exception] = []
         for configuration in self.configurations:
             try:
+                # Fallback providers are independently required to satisfy the
+                # same local commercial gate before they can be contacted.
+                await MarketDataService(
+                    self.session, configuration
+                ).authorize_request(
+                    user=user,
+                    workspace_id=workspace_id,
+                    consumer=MarketDataConsumer.LEADERSHIP,
+                    customer_display=True,
+                )
                 provider = self.registry.create(configuration)
                 verification, _ = await MarketVerificationService(self.session).verify_and_record(provider, run_id=run_id)
                 price, provenance = await provider.current_price(canonical)

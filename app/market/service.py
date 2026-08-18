@@ -99,9 +99,12 @@ class MarketDataService:
         now: datetime | None = None,
         customer_display: bool = False,
     ) -> MarketSnapshot:
-        await self._authorize(user.id, workspace_id)
-        if not isinstance(consumer, MarketDataConsumer):
-            raise MarketDataAccessError("Unapproved market-data consumer")
+        await self.authorize_request(
+            user=user,
+            workspace_id=workspace_id,
+            consumer=consumer,
+            customer_display=customer_display,
+        )
         if verification.provider is not self.configuration.provider:
             raise MarketDataUnavailableError("Provider verification mismatch")
         if verification.source is not self.configuration.source:
@@ -166,6 +169,32 @@ class MarketDataService:
             provenance=provenance,
             freshness=freshness,
         )
+
+    async def authorize_request(
+        self,
+        *,
+        user: User,
+        workspace_id: UUID,
+        consumer: MarketDataConsumer,
+        customer_display: bool,
+    ) -> None:
+        """Reject locally before a gateway can contact a provider.
+
+        This is intentionally separate from verification: workspace membership,
+        approved-consumer status, and configured commercial scope are all local
+        facts.  Provider evidence is checked later by ``snapshot_for``.
+        """
+        await self._authorize(user.id, workspace_id)
+        if not isinstance(consumer, MarketDataConsumer):
+            raise MarketDataAccessError("Unapproved market-data consumer")
+        if customer_display and not self.configuration.customer_display_entitled:
+            raise MarketDataUnavailableError(
+                "Customer-display entitlement is not pre-approved"
+            )
+        if customer_display and not self.configuration.real_time_entitled:
+            raise MarketDataUnavailableError(
+                "Real-time entitlement is not pre-approved"
+            )
 
     async def _authorize(self, user_id: UUID, workspace_id: UUID) -> None:
         membership = await self.memberships.get_for_user(user_id)

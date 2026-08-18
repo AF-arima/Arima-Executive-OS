@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -216,3 +217,9 @@ class MarketDataProvider(ABC):
     @abstractmethod
     async def verify(self) -> ProviderVerification:
         """Verify credentials and mappings without fetching market prices."""
+
+    @abstractmethod
+    async def current_price(
+        self, canonical: CanonicalInstrument
+    ) -> tuple[Decimal, MarketDataProvenance]:
+        """Return a price only after the gateway has selected this provider."""
