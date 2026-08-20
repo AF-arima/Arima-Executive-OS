@@ -17,7 +17,9 @@ from app.database.models import OAuthCredential, OAuthState, WorkspaceMembership
 from app.integrations.secret_box import decrypt_json, encrypt_json
 
 PROVIDER = "microsoft"
-SCOPES = ("offline_access", "User.Read", "Mail.Read", "Mail.ReadWrite")
+# Keep the initial connection least-privileged.  Mail.ReadWrite is not needed
+# for the first production verification, which performs read-only operations.
+SCOPES = ("offline_access", "User.Read", "Mail.Read")
 GRAPH_ME = "https://graph.microsoft.com/v1.0/me"
 GRAPH_INBOX = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
 

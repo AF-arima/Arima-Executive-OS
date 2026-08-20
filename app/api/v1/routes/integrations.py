@@ -6,7 +6,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.csrf import require_valid_csrf
-from app.auth.dependencies import get_current_active_user
+from app.auth.dependencies import require_founder_control
 from app.database.models import User
 from app.database.session import get_session
 from app.integrations import microsoft
@@ -19,12 +19,14 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 async def authorize(
     request: Request,
     session: Session,
-    actor: User = Depends(get_current_active_user),
+    actor: User = Depends(require_founder_control),
     workspace_id: UUID = Query(...),
 ):
-    del request
     try:
-        return RedirectResponse(await microsoft.authorize_url(session, actor.id, workspace_id))
+        url = await microsoft.authorize_url(session, actor.id, workspace_id)
+        if "application/json" in request.headers.get("accept", ""):
+            return {"authorization_url": url}
+        return RedirectResponse(url)
     except microsoft.MicrosoftIntegrationError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -50,7 +52,7 @@ async def callback(
 @router.get("/status")
 async def integration_status(
     session: Session,
-    actor: User = Depends(get_current_active_user),
+    actor: User = Depends(require_founder_control),
     workspace_id: UUID = Query(...),
 ):
     try:
@@ -63,7 +65,7 @@ async def integration_status(
 async def disconnect(
     request: Request,
     session: Session,
-    actor: User = Depends(get_current_active_user),
+    actor: User = Depends(require_founder_control),
     workspace_id: UUID = Query(...),
 ):
     require_valid_csrf(request)
