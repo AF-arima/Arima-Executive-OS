@@ -24,6 +24,7 @@ from app.services.exceptions import (
     ResourceConflictError,
     ResourceNotFoundError,
 )
+from app.orchestration.exceptions import RoutingError
 
 BEARER_HEADERS = {"WWW-Authenticate": "Bearer"}
 logger = logging.getLogger("arima.email")
@@ -73,6 +74,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         InvalidAnalyticsRequestError,
         _invalid_analytics_request_handler,
     )
+    app.add_exception_handler(RoutingError, _routing_error_handler)
     app.add_exception_handler(
         RequestValidationError,
         _validation_error_handler,
@@ -238,6 +240,18 @@ async def _invalid_analytics_request_handler(
     return _error_response(
         status.HTTP_422_UNPROCESSABLE_CONTENT,
         str(error) or "Invalid analytics request",
+    )
+
+
+async def _routing_error_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    """Return a safe provider-routing failure instead of an uncorsed 500."""
+
+    return _error_response(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "The orchestration provider is temporarily unavailable",
     )
 
 
