@@ -97,7 +97,10 @@ app.add_middleware(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    # CORS is application-startup configuration.  Keep the middleware
+    # independent from the cached Settings instance, which tests may refresh
+    # while exercising environment-specific validation.
+    allow_origins=tuple(settings.cors_origins),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[

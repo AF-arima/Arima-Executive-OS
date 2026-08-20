@@ -111,6 +111,7 @@ from app.database.models.intelligence import (
     TelegramProcessingStatus,
     WorkspaceAgentGrant,
 )
+from app.database.models.integration import OAuthCredential, OAuthState
 __all__ = [
     "Base",
     "AgentApproval",

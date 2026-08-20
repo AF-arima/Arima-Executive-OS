@@ -41,6 +41,11 @@ class Settings(BaseSettings):
         ),
         min_length=32,
     )
+    integration_encryption_key: SecretStr | None = None
+    microsoft_client_id: str = "d3bed67e-bb34-4392-8a65-edf68fb50775"
+    microsoft_authority: str = "https://login.microsoftonline.com/common"
+    microsoft_redirect_uri: str = ""
+    microsoft_integration_enabled: bool = False
     frontend_url: str = "http://localhost:3000"
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:3000"]
@@ -292,6 +297,20 @@ class Settings(BaseSettings):
                     "webhook credentials"
                 )
         if self.environment == "production":
+            if self.microsoft_integration_enabled and (
+                self.integration_encryption_key is None
+                or not self.integration_encryption_key.get_secret_value().strip()
+            ):
+                raise ValueError("INTEGRATION_ENCRYPTION_KEY must be configured in production")
+            redirect = urlsplit(self.microsoft_redirect_uri)
+            if self.microsoft_integration_enabled and (
+                redirect.scheme != "https"
+                or not redirect.hostname
+                or redirect.username is not None
+                or redirect.password is not None
+                or not redirect.path.endswith("/api/v1/integrations/microsoft/callback")
+            ):
+                raise ValueError("MICROSOFT_REDIRECT_URI must be an HTTPS callback URI in production")
             frontend = urlsplit(self.frontend_url)
             if (
                 frontend.scheme != "https"

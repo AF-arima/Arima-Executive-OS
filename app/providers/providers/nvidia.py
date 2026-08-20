@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
+import json
 from time import perf_counter
 from typing import Any
 
@@ -26,6 +27,8 @@ from app.providers.types import (
     ProviderStatus,
     StreamChunk,
     TokenUsage,
+    ProviderToolCall,
+    ProviderToolResult,
 )
 
 
@@ -97,10 +100,7 @@ class NvidiaProvider(ProviderAdapter):
         }
         payload: dict[str, object] = {
             "model": request.model,
-            "messages": [
-                {"role": message.role.value, "content": message.content}
-                for message in request.messages
-            ],
+            "messages": [self._message_payload(message) for message in request.messages],
             "temperature": request.temperature,
             "max_tokens": min(
                 request.max_output_tokens,
@@ -108,6 +108,14 @@ class NvidiaProvider(ProviderAdapter):
             ),
             "stream": False,
         }
+        if request.tools:
+            payload["tools"] = list(request.tools)
+            payload["tool_choice"] = request.metadata.get("tool_choice", "auto")
+            chat_template_kwargs = request.metadata.get(
+                "chat_template_kwargs"
+            )
+            if isinstance(chat_template_kwargs, Mapping):
+                payload["chat_template_kwargs"] = dict(chat_template_kwargs)
         started = perf_counter()
         if self._client is not None:
             response = await self._post(self._client, headers, payload)
@@ -118,7 +126,7 @@ class NvidiaProvider(ProviderAdapter):
                 response = await self._post(client, headers, payload)
         latency_ms = max(int((perf_counter() - started) * 1_000), 0)
         body = self._response_body(response)
-        content, finish_reason = self._completion(body)
+        content, finish_reason, tool_calls = self._completion(body)
         usage = self._usage(body)
         response_id = body.get("id")
         response_model = body.get("model")
@@ -133,6 +141,7 @@ class NvidiaProvider(ProviderAdapter):
             usage=usage,
             estimated_cost=self.estimate_cost(usage, model=request.model),
             finish_reason=finish_reason,
+            tool_calls=tool_calls,
             metadata={
                 "response_id": (
                     response_id if isinstance(response_id, str) else None
@@ -146,6 +155,17 @@ class NvidiaProvider(ProviderAdapter):
         request: CompletionRequest,
     ) -> AsyncIterator[StreamChunk]:
         response = await self.complete(request)
+        if response.tool_calls:
+            for index, call in enumerate(response.tool_calls):
+                yield StreamChunk(
+                    provider=self.provider,
+                    model=response.model,
+                    index=index,
+                    content="",
+                    tool_call=call,
+                    finished=index == len(response.tool_calls) - 1,
+                )
+            return
         words = response.content.split()
         for index, word in enumerate(words):
             yield StreamChunk(
@@ -184,10 +204,6 @@ class NvidiaProvider(ProviderAdapter):
 
     def _validate_request(self, request: CompletionRequest) -> None:
         self.require_model(request.model)
-        if request.tools:
-            raise ProviderConfigurationError(
-                "NVIDIA provider tool calling is not enabled"
-            )
         if request.json_mode:
             raise ProviderConfigurationError(
                 "NVIDIA provider JSON mode is not enabled"
@@ -195,10 +211,6 @@ class NvidiaProvider(ProviderAdapter):
         if any(message.images for message in request.messages):
             raise ProviderConfigurationError(
                 "NVIDIA provider image input is not enabled"
-            )
-        if any(message.role.value == "tool" for message in request.messages):
-            raise ProviderConfigurationError(
-                "NVIDIA provider tool messages are not enabled"
             )
         if request.temperature > 1:
             raise ProviderConfigurationError(
@@ -248,7 +260,7 @@ class NvidiaProvider(ProviderAdapter):
         return body
 
     @staticmethod
-    def _completion(body: Mapping[str, Any]) -> tuple[str, str]:
+    def _completion(body: Mapping[str, Any]) -> tuple[str, str, tuple[ProviderToolCall, ...]]:
         choices = body.get("choices")
         if not isinstance(choices, list) or len(choices) != 1:
             raise ProviderUnavailable(
@@ -260,17 +272,74 @@ class NvidiaProvider(ProviderAdapter):
                 "NVIDIA provider returned no usable output"
             )
         message = choice.get("message")
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, str) or not content.strip():
+        if not isinstance(message, dict):
             raise ProviderUnavailable(
                 "NVIDIA provider returned no usable output"
             )
+        content = message.get("content") or ""
+        if not isinstance(content, str):
+            raise ProviderUnavailable("NVIDIA provider returned invalid content")
+        tool_calls = NvidiaProvider._parse_tool_calls(message.get("tool_calls"))
         finish_reason = choice.get("finish_reason")
-        if finish_reason != "stop":
-            raise ProviderUnavailable(
-                "NVIDIA provider returned an incomplete response"
+        if finish_reason not in {"stop", "tool_calls"}:
+            detail = (
+                f"finish_reason={finish_reason}"
+                if isinstance(finish_reason, str)
+                else "finish_reason=missing_or_invalid"
             )
-        return content.strip(), "stop"
+            raise ProviderUnavailable(
+                f"NVIDIA provider returned an incomplete response ({detail})"
+            )
+        if finish_reason == "stop" and not content.strip():
+            raise ProviderUnavailable("NVIDIA provider returned no usable output")
+        if finish_reason == "tool_calls" and not tool_calls:
+            raise ProviderUnavailable("NVIDIA provider returned empty tool calls")
+        return content.strip(), finish_reason, tool_calls
+
+    @staticmethod
+    def _parse_tool_calls(raw: object) -> tuple[ProviderToolCall, ...]:
+        if raw is None:
+            return ()
+        if not isinstance(raw, list):
+            raise ProviderUnavailable("NVIDIA provider returned malformed tool calls")
+        parsed: list[ProviderToolCall] = []
+        for item in raw:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                raise ProviderUnavailable("NVIDIA provider returned malformed tool call")
+            function = item.get("function")
+            if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+                raise ProviderUnavailable("NVIDIA provider returned malformed tool call")
+            arguments = function.get("arguments", "{}")
+            if not isinstance(arguments, str):
+                raise ProviderUnavailable("NVIDIA provider returned malformed tool arguments")
+            try:
+                decoded = json.loads(arguments)
+            except (TypeError, ValueError) as error:
+                raise ProviderUnavailable("NVIDIA provider returned invalid tool arguments") from error
+            if not isinstance(decoded, dict):
+                raise ProviderUnavailable("NVIDIA provider tool arguments must be an object")
+            parsed.append(ProviderToolCall(function["name"], item["id"], decoded))
+        return tuple(parsed)
+
+    @staticmethod
+    def _message_payload(message: Any) -> dict[str, Any]:
+        if message.role.value == "tool":
+            result: ProviderToolResult = message.tool_result
+            return {
+                "role": "tool",
+                "tool_call_id": result.call_id,
+                "name": result.wire_name,
+                "content": result.serialized_result,
+            }
+        payload: dict[str, Any] = {"role": message.role.value, "content": message.content}
+        if message.tool_calls:
+            payload["tool_calls"] = [
+                {"id": call.call_id, "type": "function", "function": {
+                    "name": call.wire_name, "arguments": json.dumps(call.arguments, separators=(",", ":")),
+                }}
+                for call in message.tool_calls
+            ]
+        return payload
 
     @staticmethod
     def _usage(body: Mapping[str, Any]) -> TokenUsage:

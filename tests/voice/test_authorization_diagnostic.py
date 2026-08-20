@@ -28,7 +28,6 @@ from app.voice.state import VoiceState
 from tests.auth.conftest import AuthTestContext
 from tests.auth.helpers import bearer, grant_role, login_user, register_user
 
-pytest_plugins = ("tests.management.conftest",)
 
 
 @pytest.fixture

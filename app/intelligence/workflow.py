@@ -143,6 +143,7 @@ class ExecutiveWorkflowService:
                         content=context_text,
                         metadata={
                             "channel": channel,
+                            "tenant_id": str(workspace_id),
                             "workspace_id": str(workspace_id),
                             "evidence_ids": [
                                 str(item.evidence_id) for item in evidence

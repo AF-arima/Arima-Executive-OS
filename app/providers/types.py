@@ -145,13 +145,43 @@ class MessageRole(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class ProviderMessage:
-    role: MessageRole
-    content: str
-    images: tuple[str, ...] = ()
+class ProviderToolCall:
+    wire_name: str
+    call_id: str
+    arguments: dict[str, Any]
 
     def __post_init__(self) -> None:
-        if not self.content and not self.images:
+        if not self.wire_name.strip() or not self.call_id.strip():
+            raise ValueError("Tool call name and call_id are required")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderToolResult:
+    call_id: str
+    wire_name: str
+    serialized_result: str
+
+    def __post_init__(self) -> None:
+        if not self.call_id.strip() or not self.wire_name.strip():
+            raise ValueError("Tool result name and call_id are required")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderMessage:
+    role: MessageRole
+    content: str = ""
+    images: tuple[str, ...] = ()
+    tool_calls: tuple[ProviderToolCall, ...] = ()
+    tool_result: ProviderToolResult | None = None
+
+    def __post_init__(self) -> None:
+        if self.role is MessageRole.ASSISTANT and self.tool_result is not None:
+            raise ValueError("Assistant messages cannot contain tool results")
+        if self.role is MessageRole.TOOL and self.tool_result is None:
+            raise ValueError("Tool messages require a tool result")
+        if self.role is not MessageRole.TOOL and self.tool_result is not None:
+            raise ValueError("Only tool messages can contain tool results")
+        if not self.content and not self.images and not self.tool_calls and self.tool_result is None:
             raise ValueError("Provider message requires content or images")
 
 
@@ -184,6 +214,7 @@ class CompletionResponse:
     usage: TokenUsage
     estimated_cost: EstimatedCost
     finish_reason: str
+    tool_calls: tuple[ProviderToolCall, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -194,6 +225,7 @@ class StreamChunk:
     index: int
     content: str
     finished: bool = False
+    tool_call: ProviderToolCall | None = None
 
 
 @dataclass(frozen=True, slots=True)

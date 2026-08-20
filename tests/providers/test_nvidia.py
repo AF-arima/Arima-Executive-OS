@@ -21,6 +21,8 @@ from app.providers.types import (
     MessageRole,
     ProviderCapabilities,
     ProviderMessage,
+    ProviderToolCall,
+    ProviderToolResult,
     ProviderName,
     ProviderStatus,
 )
@@ -59,6 +61,80 @@ def request() -> CompletionRequest:
         temperature=0.2,
         max_output_tokens=512,
     )
+
+
+def test_nvidia_native_tool_call_and_tool_result_payload() -> None:
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        body = json.loads(http_request.content)
+        assert body["tool_choice"] == "auto"
+        assert body["chat_template_kwargs"] == {"enable_thinking": False}
+        assert body["tools"][0]["function"]["name"] == "email_list_recent"
+        assert body["messages"][-1] == {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "name": "email_list_recent",
+            "content": '{"messages":[]}',
+        }
+        return httpx.Response(
+            200,
+            json={
+                "model": VERIFIED_MODEL,
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "call-2",
+                            "type": "function",
+                            "function": {
+                                "name": "email_list_recent",
+                                "arguments": '{"limit":1}',
+                            },
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 3},
+            },
+        )
+
+    provider = NvidiaProvider(
+        configuration(), client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    async def run():
+        return await provider.complete(CompletionRequest(
+            model=VERIFIED_MODEL,
+            messages=(
+                ProviderMessage(role=MessageRole.USER, content="List mail"),
+                ProviderMessage(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=(ProviderToolCall("email_list_recent", "call-1", {"limit": 1}),),
+                ),
+                ProviderMessage(
+                    role=MessageRole.TOOL,
+                    tool_result=ProviderToolResult(
+                        call_id="call-1",
+                        wire_name="email_list_recent",
+                        serialized_result='{"messages":[]}',
+                    ),
+                ),
+            ),
+            tools=({
+                "type": "function",
+                "function": {
+                    "name": "email_list_recent",
+                    "description": "List recent mail",
+                    "parameters": {"type": "object"},
+                },
+            },),
+            metadata={
+                "tool_choice": "auto",
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        ))
+    result = asyncio.run(run())
+    assert result.finish_reason == "tool_calls"
+    assert result.tool_calls[0].call_id == "call-2"
 
 
 def test_nvidia_chat_adapter_uses_verified_server_side_contract() -> None:
@@ -245,7 +321,10 @@ def test_nvidia_truncated_response_and_unsupported_temperature_fail_closed(
             transport=httpx.MockTransport(handler)
         ) as client:
             provider = NvidiaProvider(configuration(), client=client)
-            with pytest.raises(ProviderUnavailable, match="incomplete"):
+            with pytest.raises(
+                ProviderUnavailable,
+                match=r"incomplete response \(finish_reason=length\)",
+            ):
                 await provider.complete(request())
             with pytest.raises(
                 ProviderConfigurationError, match="temperature"

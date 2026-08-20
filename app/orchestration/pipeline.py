@@ -5,8 +5,17 @@ from time import perf_counter
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
-from app.database.models import AuditAction, AuditEntity
+from app.database.models import (
+    AgentRiskLevel,
+    AgentToolDefinition,
+    AgentToolExecution,
+    AuditAction,
+    AuditEntity,
+    ToolExecutionMode,
+    ToolExecutionStatus,
+)
 from app.orchestration.approval import OrchestrationApprovalEngine
 from app.orchestration.context import (
     OrchestrationContextBuilder,
@@ -17,6 +26,11 @@ from app.orchestration.executor import OrchestrationExecutor
 from app.orchestration.fallback import OrchestrationFallback
 from app.orchestration.health import HealthContract
 from app.orchestration.memory import OrchestrationMemory
+from app.orchestration.native_tools import (
+    NativeExecutionContext,
+    NativeToolLoop,
+    NativeToolRegistry,
+)
 from app.orchestration.optimizer import OrchestrationOptimizer
 from app.orchestration.planner import OrchestrationPlanner
 from app.orchestration.provider_prompt import ProviderPromptBuilder
@@ -70,6 +84,7 @@ class OrchestrationPipeline(HealthContract):
         telemetry: OrchestrationTelemetry,
         provider_prompt: ProviderPromptBuilder | None = None,
         response_validator: ResponseValidator | None = None,
+        native_tool_registry: NativeToolRegistry | None = None,
     ) -> None:
         self.session = session
         self.intent = intent
@@ -88,6 +103,7 @@ class OrchestrationPipeline(HealthContract):
         self.telemetry = telemetry
         self.provider_prompt = provider_prompt or ProviderPromptBuilder()
         self.response_validator = response_validator or ResponseValidator()
+        self.native_tool_registry = native_tool_registry or NativeToolRegistry()
 
     async def execute(
         self, context: OrchestrationExecutionContext
@@ -137,25 +153,45 @@ class OrchestrationPipeline(HealthContract):
             actions=actions,
             executive_state=executive_state,
         )
-        response, provider_retries = await self.fallback.retry(
-            lambda: provider.complete(
-                CompletionRequest(
-                    model=model,
-                    messages=(
-                        ProviderMessage(
-                            role=MessageRole.SYSTEM,
-                            content=self.provider_prompt.system_instructions,
-                        ),
-                        ProviderMessage(
-                            role=MessageRole.USER,
-                            content=self.provider_prompt.build(context, built),
-                        ),
-                    ),
-                    max_output_tokens=context.request.max_output_tokens,
-                    json_mode=context.request.require_json,
+        provider_messages = (
+            ProviderMessage(
+                role=MessageRole.SYSTEM,
+                content=self.provider_prompt.system_instructions,
+            ),
+            ProviderMessage(
+                role=MessageRole.USER,
+                content=self.provider_prompt.build(context, built),
+            ),
+        )
+        if self._native_tools_enabled(context):
+            native_context = context.request.metadata.get(
+                "native_execution_context"
+            )
+            if not isinstance(native_context, NativeExecutionContext):
+                native_context = await self._native_context(context)
+            loop = NativeToolLoop(provider, self.native_tool_registry)
+            (response, native_executions), provider_retries = (
+                await self.fallback.retry(
+                    lambda: loop.complete(
+                        model=model,
+                        messages=provider_messages,
+                        max_output_tokens=context.request.max_output_tokens,
+                        context=native_context,
+                    )
                 )
             )
-        )
+            await self._record_native_executions(context, native_executions)
+        else:
+            response, provider_retries = await self.fallback.retry(
+                lambda: provider.complete(
+                    CompletionRequest(
+                        model=model,
+                        messages=provider_messages,
+                        max_output_tokens=context.request.max_output_tokens,
+                        json_mode=context.request.require_json,
+                    )
+                )
+            )
         retries += provider_retries
         validated = self.response_validator.validate(
             response.content,
@@ -255,8 +291,8 @@ class OrchestrationPipeline(HealthContract):
             chunks=chunks,
         )
 
-    @staticmethod
     def _provider_capabilities(
+        self,
         context: OrchestrationExecutionContext,
         profile: ModelProfile,
     ) -> frozenset[ProviderCapability]:
@@ -269,7 +305,124 @@ class OrchestrationPipeline(HealthContract):
             required.add(ProviderCapability.VISION)
         if profile.value == "reasoning":
             required.add(ProviderCapability.REASONING)
+        if self._native_tools_enabled(context):
+            required.add(ProviderCapability.TOOLS)
         return frozenset(required)
+
+    def _native_tools_enabled(
+        self, context: OrchestrationExecutionContext
+    ) -> bool:
+        from app.core.config import get_settings
+
+        metadata = context.request.metadata
+        return bool(
+            get_settings().microsoft_integration_enabled
+            and
+            self.native_tool_registry.declarations()
+            and metadata.get("tenant_id")
+            and metadata.get("workspace_id")
+        )
+
+    async def _native_context(
+        self, context: OrchestrationExecutionContext
+    ) -> NativeExecutionContext:
+        from uuid import UUID
+
+        from app.integrations.microsoft_graph import MicrosoftCredentialResolver
+
+        metadata = context.request.metadata
+        try:
+            tenant_id = UUID(str(metadata["tenant_id"]))
+            workspace_id = UUID(str(metadata["workspace_id"]))
+        except (KeyError, TypeError, ValueError) as error:
+            raise RuntimeError(
+                "Native tool execution requires tenant and workspace identity"
+            ) from error
+        account_id = await MicrosoftCredentialResolver(self.session).account_id(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            actor_id=context.user.id,
+        )
+        return NativeExecutionContext(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            actor_id=context.user.id,
+            provider="microsoft",
+            provider_account_id=account_id,
+            agent=str(context.agent.id),
+            approved_call_ids=frozenset(
+                str(item)
+                for item in metadata.get("approved_call_ids", [])
+            ),
+            destructive_guard_call_ids=frozenset(
+                str(item)
+                for item in metadata.get("destructive_guard_call_ids", [])
+            ),
+        )
+
+    async def _record_native_executions(
+        self, context: OrchestrationExecutionContext, executions
+    ) -> None:
+        """Persist safe execution metadata without tool arguments or content."""
+        for execution in executions:
+            tool = await self.session.scalar(
+                select(AgentToolDefinition).where(
+                    AgentToolDefinition.slug == f"native.{execution.canonical_name}"
+                )
+            )
+            if tool is None:
+                action = execution.provenance.authorization
+                tool = AgentToolDefinition(
+                    slug=f"native.{execution.canonical_name}",
+                    name=execution.canonical_name,
+                    description="Identity-bound native provider tool",
+                    category=f"provider:{execution.provenance.provider}",
+                    risk_level=(
+                        AgentRiskLevel.HIGH
+                        if "denied" in execution.provenance.status
+                        else AgentRiskLevel.LOW
+                    ),
+                    execution_mode=ToolExecutionMode.PROVIDER,
+                    requires_approval=action != "allowed",
+                    is_enabled=True,
+                    input_schema={"type": "object"},
+                    output_schema={"type": "object"},
+                )
+                self.session.add(tool)
+                await self.session.flush()
+            self.session.add(
+                AgentToolExecution(
+                    run_id=context.run.id,
+                    tool_id=tool.id,
+                    status=(
+                        ToolExecutionStatus.SUCCEEDED
+                        if execution.provenance.status == "succeeded"
+                        else ToolExecutionStatus.FAILED
+                    ),
+                    input_payload={
+                        "call_id": execution.call_id,
+                        "provider": execution.provenance.provider,
+                        "provider_account_id": execution.provenance.provider_account_id,
+                        "tenant_id": str(execution.provenance.tenant_id),
+                        "workspace_id": str(execution.provenance.workspace_id),
+                        "actor_id": str(execution.provenance.actor_id),
+                    },
+                    output_payload={
+                        "authorization": execution.provenance.authorization,
+                        "status": execution.provenance.status,
+                        "timestamp": execution.provenance.timestamp.isoformat(),
+                    },
+                    error_code=(
+                        None
+                        if execution.provenance.status == "succeeded"
+                        else execution.provenance.status
+                    ),
+                    error_message=None,
+                    started_at=execution.provenance.timestamp,
+                    completed_at=execution.provenance.timestamp,
+                    duration_ms=round(execution.provenance.duration_ms),
+                )
+            )
 
     @staticmethod
     def _attach_live_tool_evidence(

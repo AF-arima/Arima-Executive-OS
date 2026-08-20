@@ -19,6 +19,17 @@ from tests.auth.helpers import (
 )
 
 
+def test_csrf_response_token_matches_issued_cookie(
+    auth_context: AuthTestContext,
+) -> None:
+    response = auth_context.client.post("/api/v1/auth/csrf")
+
+    assert response.status_code == 200
+    token = response.json()["csrf_token"]
+    assert response.cookies.get("arima_csrf_token") == token
+    assert auth_context.client.cookies.get("arima_csrf_token") == token
+
+
 def test_registration_creates_pending_verified_workspace(
     auth_context: AuthTestContext,
 ) -> None:

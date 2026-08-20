@@ -160,6 +160,7 @@ class VoiceOrchestrationContextFactory:
                 stream=True,
                 metadata={
                     "channel": "browser_voice",
+                    "tenant_id": str(workspace_id),
                     "workspace_id": str(workspace_id),
                     "voice_session_id": str(voice_session.session_id),
                     "evidence_ids": [

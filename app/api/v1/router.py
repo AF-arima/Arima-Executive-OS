@@ -15,6 +15,7 @@ from app.api.v1.routes import (
     tasks,
     telegram,
     voice,
+    integrations,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -32,4 +33,5 @@ api_router.include_router(notifications.router)
 api_router.include_router(crm.router)
 api_router.include_router(outreach.router)
 api_router.include_router(voice.router)
+api_router.include_router(integrations.router)
 api_router.include_router(telegram.router)

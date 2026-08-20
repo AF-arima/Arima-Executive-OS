@@ -17,7 +17,6 @@ from tests.management.conftest import management_context
 __all__ = ["management_context"]
 
 CONFIGURED_FRONTEND_ORIGIN = "http://localhost:3000"
-PRODUCTION_FRONTEND_ORIGIN = "https://arimafinance.xyz"
 
 
 def configure_default_voice_agent(
@@ -292,26 +291,20 @@ def test_missing_default_agent_grant_returns_cors_protected_403_without_records(
     register_user(management_context, email)
     configure_default_voice_agent(management_context, email, grant=False)
     tokens = login_user(management_context, email)
-    settings = get_settings()
-    original_origins = list(settings.cors_origins)
-    settings.cors_origins[:] = [PRODUCTION_FRONTEND_ORIGIN]
-    try:
-        before = voice_record_counts(management_context, email)
-        response = management_context.client.post(
-            "/api/v1/voice/sessions",
-            json={},
-            headers={
-                **bearer(tokens["access_token"]),
-                "Origin": PRODUCTION_FRONTEND_ORIGIN,
-            },
-        )
-    finally:
-        settings.cors_origins[:] = original_origins
+    before = voice_record_counts(management_context, email)
+    response = management_context.client.post(
+        "/api/v1/voice/sessions",
+        json={},
+        headers={
+            **bearer(tokens["access_token"]),
+            "Origin": CONFIGURED_FRONTEND_ORIGIN,
+        },
+    )
 
     assert response.status_code == 403
     assert response.json() == {"detail": "Voice AI authorization denied"}
     assert response.headers["access-control-allow-origin"] == (
-        PRODUCTION_FRONTEND_ORIGIN
+        CONFIGURED_FRONTEND_ORIGIN
     )
     assert voice_record_counts(management_context, email) == before
 

@@ -1,7 +1,9 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.background.factory import BackgroundJobFactory
+from app.core.config import get_settings
 from app.integrations.factory import ConnectorFactory
+from app.integrations.registry import ConnectorRegistry
 from app.orchestration.approval import OrchestrationApprovalEngine
 from app.orchestration.context import OrchestrationContextBuilder
 from app.orchestration.cost import OrchestrationCostEngine
@@ -9,6 +11,7 @@ from app.orchestration.engine import OrchestrationEngine
 from app.orchestration.executor import OrchestrationExecutor
 from app.orchestration.fallback import OrchestrationFallback
 from app.orchestration.memory import OrchestrationMemory
+from app.orchestration.native_tools import NativeToolRegistry
 from app.orchestration.optimizer import OrchestrationOptimizer
 from app.orchestration.pipeline import OrchestrationPipeline
 from app.orchestration.planner import OrchestrationPlanner
@@ -48,9 +51,19 @@ class OrchestrationFactory:
         self.telemetry_sink = telemetry_sink
 
     def create(self) -> OrchestrationEngine:
+        from app.integrations.microsoft_graph import build_native_registry
+
         providers = ProviderFactory().build_registry()
         tools_registry = ToolFactory(self.session).create_registry()
-        integrations_registry = ConnectorFactory().build_registry()
+        # The legacy catalog is retained for deterministic development/test
+        # plans. Production uses only identity-bound native providers below.
+        settings = get_settings()
+        integrations_registry = (
+            ConnectorRegistry()
+            if settings.environment == "production"
+            or settings.microsoft_integration_enabled
+            else ConnectorFactory().build_registry()
+        )
         background_registry = BackgroundJobFactory().build_registry()
         fallback = OrchestrationFallback(self.policy)
         tools = ToolExecutionService(self.session, tools_registry)
@@ -86,6 +99,7 @@ class OrchestrationFactory:
             fallback=fallback,
             cost=OrchestrationCostEngine(),
             telemetry=OrchestrationTelemetry(self.telemetry_sink),
+            native_tool_registry=build_native_registry(self.session),
         )
         return OrchestrationEngine(pipeline)
 

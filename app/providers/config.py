@@ -96,6 +96,7 @@ class ProviderPlatformConfig:
                 api_key=settings.nvidia_api_key,
                 capabilities=ProviderCapabilities(
                     streaming=True,
+                    tools=True,
                     reasoning=True,
                 ),
             ),
