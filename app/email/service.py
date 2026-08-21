@@ -10,6 +10,7 @@ from app.email.templates import (
     security_alert_email,
     verification_email,
     welcome_email,
+    withdrawal_received_email,
 )
 from app.email.types import EmailMessage
 
@@ -94,6 +95,21 @@ class TransactionalEmailService:
         event: str,
     ) -> None:
         template = security_alert_email(recipient_name=recipient_name, event=event)
+        await self._send(email, template.subject, template.text_body, template.html_body)
+
+    async def send_withdrawal_received(
+        self, *, email: str, recipient_name: str, request_id, amount,
+        currency: str, masked_wallet: str, network: str,
+    ) -> None:
+        template = withdrawal_received_email(
+            recipient_name=recipient_name,
+            request_id=request_id,
+            amount=amount,
+            currency=currency,
+            masked_wallet=masked_wallet,
+            network=network,
+            support_email=str(self.settings.email_from_address or "support@arimafinance.xyz"),
+        )
         await self._send(email, template.subject, template.text_body, template.html_body)
 
     async def _send(

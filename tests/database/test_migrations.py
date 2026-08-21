@@ -193,6 +193,7 @@ def test_initial_migration_matches_metadata_and_downgrades(
         "ix_audit_logs_entity_id",
         "ix_audit_logs_project_timestamp",
         "ix_audit_logs_timestamp",
+        "ix_audit_logs_event_type",
     }
     assert {
         constraint["name"]

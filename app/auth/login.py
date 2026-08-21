@@ -18,6 +18,7 @@ async def login_credentials(request: Request) -> UserLogin:
         payload: Any = {
             "email": form.get("username"),
             "password": form.get("password"),
+            "otp": form.get("otp") or None,
             "remember_me": isinstance(remember_value, str)
             and remember_value.lower() in {"1", "true", "on", "yes"},
         }

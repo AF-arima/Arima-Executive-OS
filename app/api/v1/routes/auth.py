@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -7,9 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.context import request_security_context
 from app.auth.csrf import new_csrf_token, require_valid_csrf
-from app.auth.dependencies import get_current_active_user
+from app.auth.dependencies import (
+    get_current_active_user,
+    require_founder_control,
+    require_founder_enrollment_access,
+)
 from app.auth.exceptions import InvalidTokenError
 from app.auth.login import login_credentials
+from app.auth.security import SecurityRateLimiter
 from app.auth.service import AuthenticationService, TokenPair
 from app.core.config import get_settings
 from app.database.models import RefreshTokenSession, User
@@ -32,6 +37,9 @@ from app.schemas.auth import (
     UserPublicResponse,
     UserProfileUpdate,
     UserRegistration,
+    MFAEnrollmentResponse,
+    MFACodeRequest,
+    MFARecoveryRequest,
 )
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -41,6 +49,8 @@ EmailServiceDependency = Annotated[
     Depends(get_transactional_email_service),
 ]
 CurrentUserDependency = Annotated[User, Depends(get_current_active_user)]
+FounderEnrollmentDependency = Annotated[User, Depends(require_founder_enrollment_access)]
+FounderControlDependency = Annotated[User, Depends(require_founder_control)]
 
 
 @router.post("/csrf", response_model=CsrfTokenResponse)
@@ -49,6 +59,52 @@ async def csrf_token(response: Response) -> CsrfTokenResponse:
     _set_csrf_cookie(response, token)
     _set_no_store(response)
     return CsrfTokenResponse(csrf_token=token)
+
+
+@router.post("/mfa/enroll", response_model=MFAEnrollmentResponse)
+async def enroll_mfa(
+    request: Request,
+    current_user: FounderEnrollmentDependency,
+    session: SessionDependency,
+) -> MFAEnrollmentResponse:
+    require_valid_csrf(request)
+    _, uri = await AuthenticationService(session).begin_mfa_enrollment(current_user)
+    return MFAEnrollmentResponse(enabled=False, otpauth_uri=uri)
+
+
+@router.post("/mfa/verify", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_mfa(
+    data: MFACodeRequest,
+    request: Request,
+    response: Response,
+    current_user: FounderEnrollmentDependency,
+    session: SessionDependency,
+) -> Response:
+    require_valid_csrf(request)
+    await AuthenticationService(session).confirm_mfa_enrollment(current_user, data.code)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    _set_no_store(response)
+    return response
+
+
+@router.post("/mfa/recover/{target_user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def recover_mfa(
+    target_user_id: UUID,
+    data: MFARecoveryRequest,
+    request: Request,
+    response: Response,
+    actor: FounderControlDependency,
+    session: SessionDependency,
+) -> Response:
+    require_valid_csrf(request)
+    await AuthenticationService(session).recover_mfa(
+        actor,
+        target_user_id,
+        reason=data.reason,
+    )
+    _set_no_store(response)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 @router.post(
@@ -104,10 +160,18 @@ async def refresh(
         from app.auth.exceptions import InvalidTokenError
 
         raise InvalidTokenError
-    service = AuthenticationService(session)
+    context = request_security_context(request)
+    settings = get_settings()
+    await SecurityRateLimiter(session, settings).enforce(
+        scope="auth_refresh",
+        key=context.ip_address or "unknown-client",
+        limit=settings.login_rate_limit_per_minute,
+        window=timedelta(minutes=1),
+    )
+    service = AuthenticationService(session, settings=settings)
     pair = await service.refresh_token_pair(
         raw_refresh,
-        context=request_security_context(request),
+        context=context,
     )
     user = await service.get_current_user(
         service.jwt.decode_token(pair.access_token, expected_type="access").subject,

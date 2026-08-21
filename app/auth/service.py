@@ -17,6 +17,10 @@ from app.auth.exceptions import (
     InvalidCredentialsError,
     InvalidSecurityTokenError,
     InvalidTokenError,
+    MFAAlreadyEnabledError,
+    InvalidMFACodeError,
+    MFALockedError,
+    MFARequiredError,
     RoleNotFoundError,
     TokenReuseError,
     UserNotFoundError,
@@ -32,11 +36,14 @@ from app.auth.security import (
 from app.auth.tokens import JWTService
 from app.core.config import Settings, get_settings
 from app.database.models import (
+    AuditAction,
+    AuditEntity,
     RefreshTokenSession,
     SecurityToken,
     SecurityTokenPurpose,
     User,
     UserRole,
+    Tenant,
     Workspace,
     WorkspaceMembership,
 )
@@ -48,6 +55,9 @@ from app.database.repositories import (
 )
 from app.email.factory import get_transactional_email_service
 from app.email.service import TransactionalEmailService
+from app.services.audit import record_audit
+from app.auth.totp import decrypt_secret, encrypt_secret, generate_secret, verify_code
+from app.services.exceptions import PermissionDeniedError
 from app.schemas.auth import (
     ChangeEmailRequest,
     ChangePasswordRequest,
@@ -115,7 +125,8 @@ class AuthenticationService:
             last_name=data.last_name,
         )
         user.roles.append(roles[DEFAULT_USER_ROLE])
-        workspace = Workspace(name=self._workspace_name(user), owner=user)
+        tenant = Tenant(name=self._workspace_name(user))
+        workspace = Workspace(name=self._workspace_name(user), tenant=tenant, owner=user)
         self.session.add_all(
             [
                 user,
@@ -200,6 +211,7 @@ class AuthenticationService:
             timedelta(minutes=1),
         )
         user = await self.authenticate_user(data, context=context)
+        await self._verify_login_mfa(user, data.otp)
         user.failed_login_attempts = 0
         user.locked_until = None
         user.last_login_at = self._now()
@@ -212,6 +224,138 @@ class AuthenticationService:
         )
         await self._login_notification(user, context)
         return user, pair
+
+    async def begin_mfa_enrollment(self, user: User) -> tuple[str, str]:
+        await self._limit(
+            "mfa_enrollment_begin",
+            str(user.id),
+            self.settings.login_rate_limit_per_minute,
+            timedelta(minutes=1),
+        )
+        if user.mfa_enabled:
+            # Re-enrollment would let a stolen privileged session replace the
+            # existing factor without proving the current factor. Recovery is
+            # intentionally an audited operational process, not a bypass here.
+            raise MFAAlreadyEnabledError
+        secret = generate_secret()
+        user.mfa_secret_encrypted = encrypt_secret(secret)
+        user.mfa_enabled = False
+        user.mfa_last_accepted_step = None
+        user.mfa_failed_attempts = 0
+        await self.session.commit()
+        label = f"ARIMA:{user.email}"
+        uri = "otpauth://totp/" + label.replace(" ", "%20") + f"?secret={secret}&issuer=ARIMA"
+        return secret, uri
+
+    async def confirm_mfa_enrollment(self, user: User, code: str) -> None:
+        await self._limit(
+            "mfa_enrollment",
+            str(user.id),
+            self.settings.login_rate_limit_per_minute,
+            timedelta(minutes=1),
+        )
+        if not user.mfa_secret_encrypted:
+            raise InvalidMFACodeError
+        secret = decrypt_secret(user.mfa_secret_encrypted)
+        step = verify_code(secret, code, last_step=user.mfa_last_accepted_step)
+        if step is None:
+            user.mfa_failed_attempts += 1
+            if user.mfa_failed_attempts >= self.settings.privileged_mfa_max_attempts:
+                user.mfa_locked_until = self._now() + timedelta(minutes=self.settings.privileged_mfa_lockout_minutes)
+                user.mfa_failed_attempts = 0
+                await self.session.commit()
+                raise MFALockedError(self.settings.privileged_mfa_lockout_minutes * 60)
+            await self.session.commit()
+            raise InvalidMFACodeError
+        user.mfa_enabled = True
+        user.mfa_last_accepted_step = step
+        user.mfa_failed_attempts = 0
+        await self.refresh_tokens.revoke_all_for_user(
+            user.id, revoked_at=self._now(), reason="mfa_enabled"
+        )
+        record_audit(self.session, actor_id=user.id, action=AuditAction.STATUS_CHANGE, entity=AuditEntity.ACCOUNT, entity_id=user.id, event_type="MFA_ENABLED")
+        await self.session.commit()
+
+    async def recover_mfa(
+        self,
+        actor: User,
+        target_user_id: UUID,
+        *,
+        reason: str,
+    ) -> None:
+        """Clear a target's factor only through an already-authorized operator.
+
+        This is deliberately not self-service. The route requires Founder
+        Control, which in production requires the operator's existing MFA.
+        The supplied reason is validated for operator accountability but is
+        not persisted because free text must never become a secret sink.
+        """
+        if actor.id == target_user_id:
+            raise PermissionDeniedError("MFA recovery cannot be self-service")
+        target = await self.session.get(User, target_user_id, with_for_update=True)
+        if target is None:
+            raise UserNotFoundError
+        if not target.mfa_enabled and not target.mfa_secret_encrypted:
+            raise PermissionDeniedError("Target has no enrolled MFA factor")
+        if len(reason.strip()) < 8:
+            raise PermissionDeniedError("A recovery reason is required")
+        target.mfa_secret_encrypted = None
+        target.mfa_enabled = False
+        target.mfa_last_accepted_step = None
+        target.mfa_failed_attempts = 0
+        target.mfa_locked_until = None
+        now = self._now()
+        await self.refresh_tokens.revoke_all_for_user(
+            target.id,
+            revoked_at=now,
+            reason="mfa_recovery",
+        )
+        record_audit(
+            self.session,
+            actor_id=actor.id,
+            action=AuditAction.STATUS_CHANGE,
+            entity=AuditEntity.ACCOUNT,
+            entity_id=target.id,
+            event_type="MFA_RECOVERY",
+            event_metadata={
+                "target_user_id": str(target.id),
+                "sessions_revoked": True,
+                "reason_recorded": True,
+            },
+        )
+        await self.session.commit()
+
+    async def _verify_login_mfa(self, user: User, otp: object | None) -> None:
+        await self._limit(
+            "mfa_login",
+            str(user.id),
+            self.settings.login_rate_limit_per_minute,
+            timedelta(minutes=1),
+        )
+        if not user.mfa_enabled:
+            return
+        now = self._now()
+        if user.mfa_locked_until is not None and user.mfa_locked_until > now:
+            raise MFALockedError(max(1, int((user.mfa_locked_until - now).total_seconds())))
+        if otp is None:
+            raise MFARequiredError
+        try:
+            secret = decrypt_secret(user.mfa_secret_encrypted or "")
+        except Exception as error:
+            raise MFARequiredError from error
+        step = verify_code(secret, str(getattr(otp, "get_secret_value", lambda: otp)()), last_step=user.mfa_last_accepted_step)
+        if step is None:
+            user.mfa_failed_attempts += 1
+            if user.mfa_failed_attempts >= self.settings.privileged_mfa_max_attempts:
+                user.mfa_locked_until = now + timedelta(minutes=self.settings.privileged_mfa_lockout_minutes)
+                user.mfa_failed_attempts = 0
+                await self.session.commit()
+                raise MFALockedError(self.settings.privileged_mfa_lockout_minutes * 60)
+            await self.session.commit()
+            raise InvalidMFACodeError
+        user.mfa_failed_attempts = 0
+        user.mfa_locked_until = None
+        user.mfa_last_accepted_step = step
 
     async def issue_token_pair(
         self,
@@ -340,6 +484,15 @@ class AuthenticationService:
             ip_address=context.ip_address if context else None,
             user_agent=context.user_agent if context else None,
         )
+        record_audit(
+            self.session,
+            actor_id=active.user_id,
+            action=AuditAction.STATUS_CHANGE,
+            entity=AuditEntity.ACCOUNT,
+            entity_id=active.user_id,
+            event_type="SESSION_REVOKED",
+            event_metadata={"reason": "user_logout"},
+        )
         await self.session.commit()
 
     async def logout_all(
@@ -353,6 +506,15 @@ class AuthenticationService:
             user.id, revoked_at=self._now(), reason=reason
         )
         self._event("logout_all_succeeded", user, context)
+        record_audit(
+            self.session,
+            actor_id=user.id,
+            action=AuditAction.STATUS_CHANGE,
+            entity=AuditEntity.ACCOUNT,
+            entity_id=user.id,
+            event_type="SESSION_REVOKED",
+            event_metadata={"reason": reason},
+        )
         await self.session.commit()
 
     async def list_sessions(self, user: User) -> list[RefreshTokenSession]:
@@ -484,12 +646,22 @@ class AuthenticationService:
     ) -> None:
         user = await self._consume_token(token, SecurityTokenPurpose.PASSWORD_RESET)
         user.hashed_password = await run_in_threadpool(hash_password, password)
+        user.password_changed_at = self._now()
         user.failed_login_attempts = 0
         user.locked_until = None
         await self.refresh_tokens.revoke_all_for_user(
             user.id, revoked_at=self._now(), reason="password_reset"
         )
         self._event("password_reset_completed", user, context)
+        record_audit(
+            self.session,
+            actor_id=user.id,
+            action=AuditAction.STATUS_CHANGE,
+            entity=AuditEntity.ACCOUNT,
+            entity_id=user.id,
+            event_type="PASSWORD_CHANGED",
+            event_metadata={"reason": "password_reset"},
+        )
         await self.session.commit()
         await self._best_effort_email(user, context, "password reset")
 
@@ -500,6 +672,12 @@ class AuthenticationService:
         *,
         context: RequestSecurityContext | None = None,
     ) -> None:
+        await self._limit(
+            "password_change",
+            self._rate_key(context) + ":" + str(user.id),
+            self.settings.password_reset_rate_limit_per_hour,
+            timedelta(hours=1),
+        )
         valid = await run_in_threadpool(
             verify_password,
             data.current_password.get_secret_value(),
@@ -509,8 +687,23 @@ class AuthenticationService:
             self._event("password_change_rejected", user, context)
             await self.session.commit()
             raise InvalidCredentialsError
+        if await run_in_threadpool(
+            verify_password,
+            data.password.get_secret_value(),
+            user.hashed_password,
+        ):
+            raise InvalidCredentialsError
         user.hashed_password = await run_in_threadpool(
             hash_password, data.password.get_secret_value()
+        )
+        user.password_changed_at = self._now()
+        record_audit(
+            self.session,
+            actor_id=user.id,
+            action=AuditAction.STATUS_CHANGE,
+            entity=AuditEntity.ACCOUNT,
+            entity_id=user.id,
+            event_type="PASSWORD_CHANGED",
         )
         await self.refresh_tokens.revoke_all_for_user(
             user.id, revoked_at=self._now(), reason="password_changed"

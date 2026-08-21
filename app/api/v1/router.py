@@ -16,6 +16,10 @@ from app.api.v1.routes import (
     telegram,
     voice,
     integrations,
+    support,
+    withdrawals,
+    portfolio,
+    research,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -34,4 +38,8 @@ api_router.include_router(crm.router)
 api_router.include_router(outreach.router)
 api_router.include_router(voice.router)
 api_router.include_router(integrations.router)
+api_router.include_router(support.router)
+api_router.include_router(withdrawals.router)
+api_router.include_router(portfolio.router)
+api_router.include_router(research.router)
 api_router.include_router(telegram.router)

@@ -12,12 +12,21 @@ if TYPE_CHECKING:
     from app.database.models.user import User
 
 
+class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "tenants"
+
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+
+
 class Workspace(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """A tenant boundary. Every new account receives one personal workspace."""
 
     __tablename__ = "workspaces"
 
     name: Mapped[str] = mapped_column(String(160), nullable=False)
+    tenant_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenants.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
     owner_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -31,6 +40,7 @@ class Workspace(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="owned_workspace",
         foreign_keys=[owner_id],
     )
+    tenant: Mapped[Tenant | None] = relationship()
     memberships: Mapped[list[WorkspaceMembership]] = relationship(
         back_populates="workspace",
         cascade="all, delete-orphan",

@@ -58,6 +58,7 @@ class UserLogin(StrictSchema):
     email: EmailStr
     password: SecretStr
     remember_me: bool = False
+    otp: SecretStr | None = None
 
     @field_validator("email")
     @classmethod
@@ -174,6 +175,27 @@ class ChangePasswordRequest(StrictSchema):
     @classmethod
     def validate_password(cls, value: SecretStr) -> SecretStr:
         return _validate_password_strength(value)
+
+
+class MFACodeRequest(StrictSchema):
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+
+
+class MFARecoveryRequest(StrictSchema):
+    reason: str = Field(min_length=8, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 8:
+            raise ValueError("A recovery reason is required")
+        return normalized
+
+
+class MFAEnrollmentResponse(StrictSchema):
+    enabled: bool
+    otpauth_uri: str
 
 
 class ChangeEmailRequest(StrictSchema):

@@ -14,6 +14,10 @@ from app.auth.exceptions import (
     InvalidCredentialsError,
     InvalidSecurityTokenError,
     InvalidTokenError,
+    MFAAlreadyEnabledError,
+    MFARequiredError,
+    MFALockedError,
+    InvalidMFACodeError,
     RateLimitExceededError,
     RoleNotFoundError,
     UserNotFoundError,
@@ -41,6 +45,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     )
     app.add_exception_handler(InactiveUserError, _inactive_user_handler)
     app.add_exception_handler(InvalidTokenError, _invalid_token_handler)
+    app.add_exception_handler(MFARequiredError, _mfa_required_handler)
+    app.add_exception_handler(MFAAlreadyEnabledError, _mfa_already_enabled_handler)
+    app.add_exception_handler(MFALockedError, _mfa_locked_handler)
+    app.add_exception_handler(InvalidMFACodeError, _invalid_mfa_handler)
     app.add_exception_handler(
         InvalidSecurityTokenError,
         _invalid_security_token_handler,
@@ -115,6 +123,24 @@ async def _invalid_token_handler(
         "Invalid or expired token",
         BEARER_HEADERS,
     )
+
+
+async def _mfa_required_handler(request: Request, error: Exception) -> JSONResponse:
+    return _error_response(status.HTTP_403_FORBIDDEN, "Privileged MFA enrollment is required")
+
+
+async def _mfa_already_enabled_handler(request: Request, error: Exception) -> JSONResponse:
+    return _error_response(status.HTTP_409_CONFLICT, "Privileged MFA is already enabled")
+
+
+async def _mfa_locked_handler(request: Request, error: Exception) -> JSONResponse:
+    if not isinstance(error, MFALockedError):
+        raise error
+    return _error_response(status.HTTP_423_LOCKED, "MFA temporarily locked", {"Retry-After": str(error.retry_after_seconds)})
+
+
+async def _invalid_mfa_handler(request: Request, error: Exception) -> JSONResponse:
+    return _error_response(status.HTTP_401_UNAUTHORIZED, "Invalid MFA code", BEARER_HEADERS)
 
 
 async def _invalid_security_token_handler(

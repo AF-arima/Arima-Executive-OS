@@ -72,6 +72,31 @@ def test_refresh_rotates_cookie_and_detects_reuse(
     assert revoked_access.status_code == 401
 
 
+def test_refresh_is_rate_limited(
+    auth_context: AuthTestContext,
+) -> None:
+    from app.core.config import get_settings
+
+    register_user(auth_context)
+    login_user(auth_context)
+    settings = get_settings()
+    original_limit = settings.login_rate_limit_per_minute
+    settings.login_rate_limit_per_minute = 1
+    try:
+        first = auth_context.client.post(
+            "/api/v1/auth/refresh",
+            headers=csrf_headers(auth_context),
+        )
+        second = auth_context.client.post(
+            "/api/v1/auth/refresh",
+            headers=csrf_headers(auth_context),
+        )
+        assert first.status_code == 200
+        assert second.status_code == 429
+    finally:
+        settings.login_rate_limit_per_minute = original_limit
+
+
 def test_logout_revokes_access_and_refresh_session(
     auth_context: AuthTestContext,
 ) -> None:
