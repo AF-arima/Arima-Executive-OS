@@ -33,9 +33,11 @@ Secrets and credential values were not inspected or reproduced.
   test files were preserved and not reviewed as a release.
 - No tests, migrations, scripts, database access, application startup, provider
   calls, network requests, browser actions, or deployment were performed.
-- A clean audit-only snapshot will be created separately after this report is
-  corrected, if only the report can be safely staged. The snapshot is metadata
-  only and is not a release or implementation milestone.
+- A clean audit-only snapshot base was safely created containing only the
+  report: branch `audit/stage1-corrected-evidence`, initial report-only commit
+  `04c11e3`. This corrected report is preserved in the subsequent audit-only
+  correction commit on the same branch. Both commits are metadata only and are
+  not releases or implementation milestones.
 
 Confidence tags used below:
 
