@@ -174,6 +174,9 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
+    ai_provider_timeout_seconds: float = Field(
+        default=15.0, ge=1.0, le=60.0
+    )
     gemini_model: str = Field(
         default="gemini-3.6-flash",
         min_length=1,
@@ -209,6 +212,12 @@ class Settings(BaseSettings):
     )
     arima_voice_session_timeout_seconds: int = Field(
         default=1_800, ge=60, le=86_400
+    )
+    arima_voice_execution_timeout_seconds: float = Field(
+        default=35.0, ge=1.0, le=60.0
+    )
+    arima_voice_max_provider_retries: int = Field(
+        default=1, ge=0, le=2
     )
     voice_transcript_rate_limit_per_minute: int = Field(
         default=10, ge=1, le=1_000
