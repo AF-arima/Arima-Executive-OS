@@ -77,9 +77,7 @@ class OrchestrationPlanner(HealthContract):
     def _live_data_step(content: str) -> PlanStep | None:
         value = content.casefold()
         resolved = InstrumentResolver().resolve(content)
-        if resolved is not None and any(term in value for term in (
-            "price", "worth", "quote", "trading", "doing", "how much", "what is", "what's", "what’s", "right now", "current",
-        )):
+        if resolved is not None and OrchestrationPlanner._is_live_market_request(value):
             return PlanStep(
                 target=PlanTarget.TOOL,
                 name="market.current_price",
@@ -106,3 +104,48 @@ class OrchestrationPlanner(HealthContract):
                 name="runtime.current_date",
             )
         return None
+
+    @staticmethod
+    def _is_live_market_request(value: str) -> bool:
+        conceptual_markers = (
+            "factor",
+            "affect",
+            "volatile",
+            "volatility",
+            "market cycle",
+            "عوامل",
+            "تأثیر",
+            "تاثیر",
+            "نوسان",
+            "چرخه",
+        )
+        if any(marker in value for marker in conceptual_markers):
+            return False
+        explicit_live_markers = (
+            "current",
+            "currently",
+            "latest",
+            "right now",
+            "at the moment",
+            "today",
+            "how much",
+            "trading",
+            "فعلی",
+            "کنونی",
+            "الان",
+            "امروز",
+            "آخرین",
+            "چنده",
+            "چقدر",
+            "معامله",
+        )
+        if any(marker in value for marker in explicit_live_markers):
+            return True
+        return any(
+            phrase in value
+            for phrase in (
+                "what is the price",
+                "what's the price",
+                "what’s the price",
+            )
+        )

@@ -122,3 +122,29 @@ def test_provider_prompt_carries_current_request_language() -> None:
             assert payload["response_language"] == "fa"
 
     asyncio.run(scenario())
+
+
+def test_current_news_prompt_requires_verified_news_evidence() -> None:
+    async def scenario() -> None:
+        async with sqlite_session() as session:
+            request = OrchestrationRequest(
+                content="What are the main financial news stories today?",
+                metadata={"orchestration_intent": "current_news"},
+            )
+            context = await make_context(session, request)
+            built = BuiltOrchestrationContext(
+                system_prompt="",
+                user_profile={},
+                agent_instructions="",
+                conversation=[],
+                memories=[],
+                tool_results=[],
+                integration_results=[],
+                background_results=[],
+                token_count=0,
+                token_limit=1,
+            )
+            payload = json.loads(ProviderPromptBuilder().build(context, built))
+            assert "No verified live-news source is configured" in payload["current_news_policy"]
+
+    asyncio.run(scenario())

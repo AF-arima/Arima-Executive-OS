@@ -21,6 +21,8 @@ class OrchestrationIntent(str, Enum):
     GROWTH = "growth"
     PROJECTS = "projects"
     GENERAL = "general"
+    GENERAL_ASSET_DISCUSSION = "general_asset_discussion"
+    CURRENT_NEWS = "current_news"
 
 
 class ModelProfile(str, Enum):

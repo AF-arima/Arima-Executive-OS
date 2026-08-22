@@ -43,6 +43,11 @@ class ProviderPromptBuilder:
             else {"availability": "unavailable"},
             "evidence": self._evidence(context.request.metadata),
         }
+        if context.request.metadata.get("orchestration_intent") == "current_news":
+            payload["current_news_policy"] = (
+                "No verified live-news source is configured. Do not claim or summarize current news; "
+                "state that verified live financial news is currently unavailable."
+            )
         return json.dumps(
             payload,
             ensure_ascii=False,

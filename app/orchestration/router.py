@@ -39,10 +39,45 @@ class IntentEngine(HealthContract):
         OrchestrationIntent.CONVERSATION: ("chat", "discuss"),
     }
 
+    _CURRENT_NEWS_MARKERS = (
+        "news today",
+        "news stories today",
+        "today's news",
+        "today’s news",
+        "latest news",
+        "current news",
+        "اخبار امروز",
+        "آخرین اخبار",
+        "جدیدترین اخبار",
+    )
+
+    _ASSET_DISCUSSION_MARKERS = (
+        "explain what factors",
+        "what factors affect",
+        "what affects",
+        "why is",
+        "why are",
+        "volatile",
+        "volatility",
+        "market cycles",
+        "in simple terms",
+        "به زبان ساده",
+        "عوامل",
+        "تأثیر",
+        "تاثیر",
+        "نوسان",
+        "چرخه",
+        "چرا",
+    )
+
     def detect(self, request: OrchestrationRequest) -> OrchestrationIntent:
         if request.requested_intent is not None:
             return request.requested_intent
         content = request.content.lower()
+        if any(marker in content for marker in self._CURRENT_NEWS_MARKERS):
+            return OrchestrationIntent.CURRENT_NEWS
+        if any(marker in content for marker in self._ASSET_DISCUSSION_MARKERS):
+            return OrchestrationIntent.GENERAL_ASSET_DISCUSSION
         for intent, keywords in self.KEYWORDS.items():
             if any(keyword in content for keyword in keywords):
                 return intent

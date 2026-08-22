@@ -31,11 +31,43 @@ def test_deterministic_intent_routing() -> None:
         "Show project milestones": OrchestrationIntent.PROJECTS,
         "Make a roadmap plan": OrchestrationIntent.PLANNING,
         "Hello there": OrchestrationIntent.GENERAL,
+        "Explain what factors affect Bitcoin's price.": OrchestrationIntent.GENERAL_ASSET_DISCUSSION,
+        "What are the main financial news stories today?": OrchestrationIntent.CURRENT_NEWS,
     }
     assert {
         engine.detect(OrchestrationRequest(content=text))
         for text in cases
     } == set(cases.values())
+
+
+def test_asset_discussion_does_not_invoke_market_tool() -> None:
+    planner = OrchestrationPlanner()
+    for content in (
+        "Explain what factors affect Bitcoin's price.",
+        "Why is Bitcoin's price volatile?",
+        "چه عواملی روی قیمت بیت‌کوین تأثیر می‌گذارند؟",
+    ):
+        plan = planner.plan(IntentEngine().detect(OrchestrationRequest(content=content)), content)
+        assert not any(step.name == "market.current_price" for step in plan.steps)
+
+
+def test_live_market_requests_invoke_market_tool_in_both_languages() -> None:
+    planner = OrchestrationPlanner()
+    for content in (
+        "What is the current BTC price?",
+        "How much is BTC trading at right now?",
+        "قیمت فعلی بیت‌کوین چنده؟",
+    ):
+        plan = planner.plan(IntentEngine().detect(OrchestrationRequest(content=content)), content)
+        market_step = next(step for step in plan.steps if step.name == "market.current_price")
+        assert market_step.payload == {"instrument": "BTCUSD"}
+
+
+def test_current_news_is_explicitly_guarded_without_a_news_provider() -> None:
+    request = OrchestrationRequest(content="What are the main financial news stories today?")
+    assert IntentEngine().detect(request) is OrchestrationIntent.CURRENT_NEWS
+    plan = OrchestrationPlanner().plan(OrchestrationIntent.CURRENT_NEWS, request.content)
+    assert not any(step.name == "market.current_price" for step in plan.steps)
 
 
 def test_agent_provider_model_routing() -> None:

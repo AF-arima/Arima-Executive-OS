@@ -115,6 +115,7 @@ class OrchestrationPipeline(HealthContract):
     ) -> OrchestrationResult:
         started = perf_counter()
         intent = self.intent.detect(context.request)
+        context.request.metadata["orchestration_intent"] = intent.value
         candidates = context.agent_candidates or (
             AgentCandidate(
                 agent_id=context.agent.id,

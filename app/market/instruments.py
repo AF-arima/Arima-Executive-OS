@@ -40,7 +40,7 @@ class CanonicalInstrumentRequest(BaseModel):
 
 
 _CATALOG: tuple[tuple[CanonicalInstrumentRequest, tuple[str, ...]], ...] = (
-    (CanonicalInstrumentRequest(canonical=CanonicalInstrument.BTCUSD, asset_class=AssetClass.CRYPTO, name="Bitcoin / US Dollar", base_currency="BTC", quote_currency="USD"), ("bitcoin", "btc", "btc/usd")),
+    (CanonicalInstrumentRequest(canonical=CanonicalInstrument.BTCUSD, asset_class=AssetClass.CRYPTO, name="Bitcoin / US Dollar", base_currency="BTC", quote_currency="USD"), ("bitcoin", "btc", "btc/usd", "بیت کوین", "بیت‌کوین", "بیتکوین")),
     (CanonicalInstrumentRequest(canonical=CanonicalInstrument.ETHUSD, asset_class=AssetClass.CRYPTO, name="Ether / US Dollar", base_currency="ETH", quote_currency="USD"), ("ethereum", "ether", "eth", "eth/usd")),
     (CanonicalInstrumentRequest(canonical=CanonicalInstrument.XAUUSD, asset_class=AssetClass.COMMODITY, name="Gold Spot / US Dollar", base_currency="XAU", quote_currency="USD"), ("gold", "xau", "xau/usd")),
     (CanonicalInstrumentRequest(canonical=CanonicalInstrument.XAGUSD, asset_class=AssetClass.COMMODITY, name="Silver Spot / US Dollar", base_currency="XAG", quote_currency="USD"), ("silver", "xag", "xag/usd")),
@@ -63,7 +63,7 @@ _CATALOG: tuple[tuple[CanonicalInstrumentRequest, tuple[str, ...]], ...] = (
 
 class InstrumentResolver:
     def resolve(self, text: str) -> CanonicalInstrumentRequest | None:
-        value = re.sub(r"[^a-z0-9/& ]+", " ", text.casefold())
+        value = re.sub(r"[^\w/& ]+", " ", text.casefold()).replace("\u200c", " ")
         if re.search(r"\boil\b", value) and not any(word in value for word in ("wti", "brent", "west texas")):
             return None
         matches = [request for request, aliases in _CATALOG if any(re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", value) for alias in aliases)]
