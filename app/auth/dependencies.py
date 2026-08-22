@@ -9,6 +9,7 @@ from app.auth.exceptions import (
     EmailNotVerifiedError,
     InactiveUserError,
     InvalidTokenError,
+    MFARequiredError,
 )
 from app.auth.service import AuthenticationService
 from app.auth.tokens import JWTService
@@ -17,6 +18,7 @@ from app.database.session import get_session
 from app.services.permissions import (
     has_founder_control_access,
     has_platform_administration,
+    requires_privileged_mfa,
 )
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -56,6 +58,8 @@ async def require_platform_operator(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Platform operator access is required",
         )
+    if requires_privileged_mfa(current_user) and not current_user.mfa_enabled:
+        raise MFARequiredError
     return current_user
 
 
@@ -63,6 +67,21 @@ async def require_founder_control(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> User:
     """Require a verified administrator on the server-side Founder allowlist."""
+
+    if not has_founder_control_access(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Founder access is required",
+        )
+    if requires_privileged_mfa(current_user) and not current_user.mfa_enabled:
+        raise MFARequiredError
+    return current_user
+
+
+async def require_founder_enrollment_access(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> User:
+    """Allow only the already-authorized founder to enroll the first factor."""
 
     if not has_founder_control_access(current_user):
         raise HTTPException(

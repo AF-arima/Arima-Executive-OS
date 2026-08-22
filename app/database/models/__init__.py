@@ -26,6 +26,23 @@ from app.database.models.agent import (
     ToolExecutionStatus,
 )
 from app.database.models.audit_log import AuditAction, AuditEntity, AuditLog
+from app.database.models.withdrawal import (
+    WithdrawalCircuitBreaker,
+    WithdrawalCircuitState,
+    WithdrawalRequest,
+    WithdrawalState,
+)
+from app.database.models.financial import (
+    FinancialAccount,
+    FinancialTransaction,
+    FinancialTransactionStatus,
+    LedgerBucket,
+    LedgerDirection,
+    LedgerEntry,
+    Portfolio,
+    PortfolioPosition,
+    PortfolioStatus,
+)
 from app.database.models.data_feed_observation import DataFeedObservation
 from app.database.models.base import (
     Base,
@@ -94,7 +111,7 @@ from app.database.models.security import (
     SecurityToken,
     SecurityTokenPurpose,
 )
-from app.database.models.workspace import Workspace, WorkspaceMembership
+from app.database.models.workspace import Tenant, Workspace, WorkspaceMembership
 from app.database.models.voice import VoiceSessionRecord
 from app.database.models.market import MarketPrice
 from app.database.models.market_verification import MarketProviderVerification
@@ -112,6 +129,8 @@ from app.database.models.intelligence import (
     WorkspaceAgentGrant,
 )
 from app.database.models.integration import OAuthCredential, OAuthState
+from app.database.models.quant import TradeExecution
+from app.database.models.research import QLabDataset, QLabExperiment, QLabModel, QLabRun, ResearchRecord
 __all__ = [
     "Base",
     "AgentApproval",
@@ -140,6 +159,19 @@ __all__ = [
     "AuditAction",
     "AuditEntity",
     "AuditLog",
+    "WithdrawalCircuitBreaker",
+    "WithdrawalCircuitState",
+    "WithdrawalRequest",
+    "WithdrawalState",
+    "FinancialAccount",
+    "FinancialTransaction",
+    "FinancialTransactionStatus",
+    "LedgerBucket",
+    "LedgerDirection",
+    "LedgerEntry",
+    "Portfolio",
+    "PortfolioPosition",
+    "PortfolioStatus",
     "DataFeedObservation",
     "BackgroundJobAttempt",
     "BackgroundJobDefinition",
@@ -196,6 +228,7 @@ __all__ = [
     "TimestampMixin",
     "UUIDPrimaryKeyMixin",
     "User",
+    "Tenant",
     "UserRole",
     "SecurityEvent",
     "SecurityToken",
@@ -216,4 +249,12 @@ __all__ = [
     "TelegramMessage",
     "TelegramProcessingStatus",
     "WorkspaceAgentGrant",
+    "OAuthCredential",
+    "OAuthState",
+    "TradeExecution",
+    "QLabDataset",
+    "QLabExperiment",
+    "QLabModel",
+    "QLabRun",
+    "ResearchRecord",
 ]

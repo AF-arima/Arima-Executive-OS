@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     founder_control_emails: Annotated[list[EmailStr], NoDecode] = Field(
         default_factory=list
     )
+    privileged_mfa_required: bool = True
+    privileged_mfa_lockout_minutes: int = Field(default=15, ge=1, le=1_440)
+    privileged_mfa_max_attempts: int = Field(default=5, ge=1, le=20)
     auth_cookie_domain: str | None = None
     auth_cookie_secure: bool = False
     auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"

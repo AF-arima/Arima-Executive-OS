@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+from decimal import Decimal
 from html import escape
 from urllib.parse import urlencode
+from uuid import UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +150,22 @@ def security_alert_email(
             "contact support.</p>"
         ),
     )
+
+
+def withdrawal_received_email(
+    *, recipient_name: str, request_id: UUID, amount: Decimal,
+    currency: str, masked_wallet: str, network: str, support_email: str,
+) -> EmailTemplate:
+    subject = "Withdrawal request received"
+    text = (
+        f"Hello {recipient_name},\n\n"
+        "Your withdrawal request has been received and is under review.\n\n"
+        f"Request ID: {request_id}\nAmount: {amount} {currency}\n"
+        f"Destination: {masked_wallet}\nNetwork: {network}\n\n"
+        "Our team will review it and communicate within 24 hours. "
+        f"Support: {support_email}\n\nThis does not confirm completion."
+    )
+    return EmailTemplate(subject=subject, text_body=text, html_body=escape(text).replace("\n", "<br>"))
 
 
 def link(

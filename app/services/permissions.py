@@ -69,6 +69,13 @@ def has_founder_control_access(user: User) -> bool:
     )
 
 
+def requires_privileged_mfa(user: User) -> bool:
+    """Production privileged operations require an enrolled MFA factor."""
+
+    settings = get_settings()
+    return settings.environment == "production" and settings.privileged_mfa_required
+
+
 def analytics_scope(user: User) -> AnalyticsScope:
     roles = user_roles(user)
     if WORKSPACE_MANAGEMENT_ROLES.intersection(roles):

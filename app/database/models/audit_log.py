@@ -10,6 +10,8 @@ from sqlalchemy import (
     Enum as SQLAlchemyEnum,
     ForeignKey,
     Index,
+    String,
+    JSON,
     Uuid,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -51,6 +53,9 @@ class AuditEntity(str, Enum):
     CAMPAIGN = "campaign"
     AUTOMATION = "automation"
     DATA_FEED_OBSERVATION = "data_feed_observation"
+    ACCOUNT = "account"
+    WITHDRAWAL = "withdrawal"
+    WITHDRAWAL_CIRCUIT_BREAKER = "withdrawal_circuit_breaker"
 
 
 class AuditLog(UUIDPrimaryKeyMixin, Base):
@@ -92,6 +97,12 @@ class AuditLog(UUIDPrimaryKeyMixin, Base):
     project_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         nullable=True,
+    )
+    event_type: Mapped[str | None] = mapped_column(
+        String(100), index=True, nullable=True
+    )
+    event_metadata: Mapped[dict[str, object]] = mapped_column(
+        JSON, default=dict, nullable=False
     )
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

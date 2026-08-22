@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.database.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -60,6 +60,15 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(64),
         nullable=True,
     )
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    mfa_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    mfa_last_accepted_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mfa_failed_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    mfa_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ux_users_email_lower", func.lower(email), unique=True),

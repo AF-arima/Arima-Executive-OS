@@ -50,6 +50,24 @@ class CsrfValidationError(AuthenticationError):
     pass
 
 
+class MFARequiredError(AuthenticationError):
+    pass
+
+
+class MFAAlreadyEnabledError(AuthenticationError):
+    pass
+
+
+class InvalidMFACodeError(AuthenticationError):
+    pass
+
+
+class MFALockedError(AuthenticationError):
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__("MFA temporarily locked")
+        self.retry_after_seconds = retry_after_seconds
+
+
 class UserNotFoundError(AuthenticationError):
     pass
 
