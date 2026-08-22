@@ -4,13 +4,15 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 
-from app.database.models import AgentConversation, VoiceSessionRecord
+from app.database.models import AgentConversation, VoiceSessionRecord, WorkspaceAgentGrant
 from app.database.repositories import UserRepository, WorkspaceRepository
+from app.database.repositories.agent import AgentDefinitionRepository
 from app.intelligence.access import AgentGrantService
 from app.core.config import get_settings
 from app.services.agent_bootstrap import bootstrap_agent_platform
 from app.voice.session import VoiceSessionStore
 from app.voice.state import VoiceState
+from app.voice.exceptions import VoiceExecutionTimeout, VoiceProviderUnavailable
 from tests.auth.helpers import bearer, login_user, register_user
 from tests.management.conftest import management_context
 
@@ -172,6 +174,74 @@ def test_active_transcript_returns_conflict_instead_of_internal_error(
     }
 
 
+def test_provider_timeout_returns_gateway_timeout(
+    management_context, monkeypatch
+) -> None:
+    email = "voice-provider-timeout@example.com"
+    register_user(management_context, email)
+    configure_default_voice_agent(management_context, email, grant=True)
+    tokens = login_user(management_context, email)
+    headers = bearer(tokens["access_token"])
+    created = management_context.client.post(
+        "/api/v1/voice/sessions", json={}, headers=headers
+    )
+    assert created.status_code == 201
+
+    class TimeoutGateway:
+        async def handle_transcript(
+            self, session_id, transcript, actor, correlation_id=None
+        ):
+            del session_id, transcript, actor, correlation_id
+            raise VoiceExecutionTimeout("provider timed out")
+
+    monkeypatch.setattr(
+        "app.api.v1.routes.voice.VoiceGatewayFactory.create",
+        lambda self: TimeoutGateway(),
+    )
+    response = management_context.client.post(
+        f"/api/v1/voice/sessions/{created.json()['session_id']}/transcript",
+        json={"transcript": "Analyse this decision"},
+        headers=headers,
+    )
+
+    assert response.status_code == 504
+    assert response.json() == {"detail": "provider timed out"}
+
+
+def test_provider_unavailability_returns_service_unavailable(
+    management_context, monkeypatch
+) -> None:
+    email = "voice-provider-unavailable@example.com"
+    register_user(management_context, email)
+    configure_default_voice_agent(management_context, email, grant=True)
+    tokens = login_user(management_context, email)
+    headers = bearer(tokens["access_token"])
+    created = management_context.client.post(
+        "/api/v1/voice/sessions", json={}, headers=headers
+    )
+    assert created.status_code == 201
+
+    class UnavailableGateway:
+        async def handle_transcript(
+            self, session_id, transcript, actor, correlation_id=None
+        ):
+            del session_id, transcript, actor, correlation_id
+            raise VoiceProviderUnavailable("provider unavailable")
+
+    monkeypatch.setattr(
+        "app.api.v1.routes.voice.VoiceGatewayFactory.create",
+        lambda self: UnavailableGateway(),
+    )
+    response = management_context.client.post(
+        f"/api/v1/voice/sessions/{created.json()['session_id']}/transcript",
+        json={"transcript": "Analyse this decision"},
+        headers=headers,
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "provider unavailable"}
+
+
 def test_unclaimed_transcript_returns_conflict_without_state_fallback(
     management_context, monkeypatch
 ) -> None:
@@ -324,3 +394,44 @@ def test_authorized_default_agent_grant_creates_voice_session(
     )
 
     assert response.status_code == 201
+
+
+def test_fresh_registration_receives_default_agent_grant_for_voice_session(
+    management_context,
+) -> None:
+    register_user(management_context, "platform-bootstrap@example.com")
+    configure_default_voice_agent(
+        management_context,
+        "platform-bootstrap@example.com",
+        grant=False,
+    )
+
+    email = "voice-fresh-onboarding@example.com"
+    user = register_user(management_context, email)
+    tokens = login_user(management_context, email)
+
+    async def assert_grant() -> None:
+        async with management_context.session_factory() as session:
+            account = await UserRepository(session).get_by_email(email)
+            assert account is not None
+            workspace = await WorkspaceRepository(session).get_by_owner(account.id)
+            assert workspace is not None
+            agent = await AgentDefinitionRepository(session).get_active_default()
+            assert agent is not None
+            grant = await session.scalar(
+                select(WorkspaceAgentGrant).where(
+                    WorkspaceAgentGrant.workspace_id == workspace.id,
+                    WorkspaceAgentGrant.agent_id == agent.id,
+                )
+            )
+            assert grant is not None
+
+    asyncio.run(assert_grant())
+    response = management_context.client.post(
+        "/api/v1/voice/sessions",
+        json={},
+        headers=bearer(tokens["access_token"]),
+    )
+    assert response.status_code == 201
+    assert response.json()["user_id"] == user["id"]
+    assert response.json()["conversation_id"] is not None

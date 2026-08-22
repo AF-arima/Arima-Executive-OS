@@ -36,7 +36,7 @@ class ProviderFactory:
             ProviderName.MOCK: MockProvider,
             ProviderName.OPENAI: OpenAIProvider,
             ProviderName.ANTHROPIC: AnthropicProvider,
-            ProviderName.GEMINI: GeminiProvider,
+            ProviderName.GEMINI: self._build_gemini,
             ProviderName.NVIDIA: NvidiaProvider,
             ProviderName.OLLAMA: OllamaProvider,
         }
@@ -67,6 +67,12 @@ class ProviderFactory:
                 f"{provider_name.value}"
             )
         return builder(config)
+
+    def _build_gemini(self, config: ProviderConfig) -> ProviderAdapter:
+        return GeminiProvider(
+            config,
+            timeout_seconds=self.settings.ai_provider_timeout_seconds,
+        )
 
     def create_and_register(
         self,

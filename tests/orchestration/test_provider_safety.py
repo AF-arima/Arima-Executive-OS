@@ -124,6 +124,7 @@ def test_pipeline_sends_only_static_instructions_and_canonical_projection() -> N
                         {"content": "Approved fact.", "evidence_id": "evidence-1"}
                     ],
                     "executive_state": {"availability": "unavailable"},
+                    "response_language": "en",
                     "user_request": "Summarise the approved decision.",
                 },
                 ensure_ascii=False,

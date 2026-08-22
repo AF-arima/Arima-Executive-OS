@@ -19,6 +19,28 @@ class WorkspaceRepository(AsyncRepository[Workspace]):
             .options(selectinload(Workspace.memberships))
         )
 
+    async def get_canonical_for_user(self, user_id: UUID) -> Workspace | None:
+        """Return the sole workspace owned or authorized for a user."""
+        workspaces = list(
+            (
+                await self.session.scalars(
+                    select(Workspace)
+                    .outerjoin(
+                        WorkspaceMembership,
+                        WorkspaceMembership.workspace_id == Workspace.id,
+                    )
+                    .where(
+                        (Workspace.owner_id == user_id)
+                        | (WorkspaceMembership.user_id == user_id)
+                    )
+                    .options(selectinload(Workspace.memberships))
+                    .order_by(Workspace.created_at, Workspace.id)
+                    .distinct()
+                )
+            ).all()
+        )
+        return workspaces[0] if len(workspaces) == 1 else None
+
 
 class WorkspaceMembershipRepository(AsyncRepository[WorkspaceMembership]):
     def __init__(self, session: AsyncSession) -> None:

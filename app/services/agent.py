@@ -344,7 +344,9 @@ class ConversationService:
         owner = await self.users.get_with_roles(owner_id)
         if owner is None or not owner.is_active:
             raise ResourceNotFoundError("User not found")
-        workspace = await WorkspaceRepository(self.session).get_by_owner(owner_id)
+        workspace = await WorkspaceRepository(self.session).get_canonical_for_user(
+            owner_id
+        )
         if workspace is None:
             raise ResourceNotFoundError("Workspace not found")
         agent = await self.agents.get(data.agent_id)

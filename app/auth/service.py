@@ -47,6 +47,7 @@ from app.database.models import (
     Workspace,
     WorkspaceMembership,
 )
+from app.intelligence.access import provision_default_agent_grant
 from app.database.repositories import (
     RefreshTokenRepository,
     RoleRepository,
@@ -135,6 +136,11 @@ class AuthenticationService:
         )
         try:
             await self.session.flush()
+            await provision_default_agent_grant(
+                self.session,
+                workspace_id=workspace.id,
+                granted_by_id=user.id,
+            )
             token = await self._issue_security_token(
                 user,
                 SecurityTokenPurpose.EMAIL_VERIFICATION,

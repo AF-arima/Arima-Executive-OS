@@ -5,6 +5,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.database.models import AgentRunStatus, MessageRole, User
 from app.intelligence.access import (
     AgentGrantService,
@@ -16,6 +17,7 @@ from app.intelligence.retrieval import TenantSafeRetrievalService
 from app.intelligence.schemas import RetrievalQuery
 from app.orchestration.context import OrchestrationExecutionContext
 from app.orchestration.factory import OrchestrationFactory
+from app.orchestration.policy import OrchestrationPolicy
 from app.orchestration.schemas import OrchestrationRequest
 from app.schemas.agent import (
     MessageCreateRequest,
@@ -36,6 +38,7 @@ from app.services.permissions import user_roles
 from app.voice.gateway import VoiceGateway
 from app.voice.conversation import VoiceConversationResolver
 from app.voice.exceptions import VoicePermissionDenied
+from app.voice.health import configured_provider_provenance
 from app.voice.orchestration import DurableVoiceOrchestration
 from app.voice.schemas import VoiceSession
 from app.voice.session import VoiceSessionStore
@@ -191,14 +194,22 @@ class VoiceGatewayFactory:
         sessions: VoiceSessionStore | None = None,
         enabled: bool = True,
         session_timeout_seconds: int = 1_800,
+        execution_timeout_seconds: float = 7.0,
     ) -> None:
         self.database = database
         self.sessions = sessions or VoiceSessionStore(database)
         self.enabled = enabled
         self.session_timeout_seconds = session_timeout_seconds
+        self.execution_timeout_seconds = execution_timeout_seconds
 
     def create(self) -> VoiceGateway:
-        orchestration = OrchestrationFactory(self.database).create()
+        settings = get_settings()
+        orchestration = OrchestrationFactory(
+            self.database,
+            policy=OrchestrationPolicy(
+                maximum_retries=settings.arima_voice_max_provider_retries
+            ),
+        ).create()
         return VoiceGateway(
             sessions=self.sessions,
             orchestration=DurableVoiceOrchestration(
@@ -210,4 +221,6 @@ class VoiceGatewayFactory:
             stale_session_timeout=timedelta(
                 seconds=self.session_timeout_seconds
             ),
+            execution_timeout_seconds=self.execution_timeout_seconds,
+            provider_provenance=configured_provider_provenance(get_settings()),
         )

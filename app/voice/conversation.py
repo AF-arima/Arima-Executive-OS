@@ -29,7 +29,9 @@ class VoiceConversationResolver:
         self.database = database
 
     async def resolve(self, actor: User) -> UUID:
-        workspace = await WorkspaceRepository(self.database).get_by_owner(actor.id)
+        workspace = await WorkspaceRepository(self.database).get_canonical_for_user(
+            actor.id
+        )
         if workspace is None:
             raise VoicePermissionDenied("Voice AI authorization denied")
         try:

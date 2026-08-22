@@ -9,6 +9,7 @@ from app.core.config import Settings
 from app.providers.config import ProviderConfig
 from app.providers.exceptions import (
     AuthenticationFailure,
+    ProviderTimeout,
     ProviderUnavailable,
     RateLimitExceeded,
 )
@@ -111,6 +112,40 @@ def test_gemini_adapter_uses_server_side_generate_content_contract() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "response_text",
+    [
+        "Inflation reduces purchasing power and can affect rates and asset prices.",
+        "تورم قدرت خرید را کاهش می‌دهد و می‌تواند بر نرخ‌ها و قیمت دارایی‌ها اثر بگذارد.",
+    ],
+)
+def test_gemini_success_preserves_the_provider_response_language(
+    response_text: str,
+) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {"parts": [{"text": response_text}]},
+                        "finishReason": "STOP",
+                    }
+                ]
+            },
+        )
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            provider = GeminiProvider(configuration(), client=client)
+            result = await provider.complete(request())
+        assert result.content == response_text
+
+    asyncio.run(scenario())
+
+
 def test_gemini_missing_credentials_is_unavailable_and_factory_registers_it() -> None:
     missing = GeminiProvider(configuration(api_key=None))
     health = asyncio.run(missing.health())
@@ -129,6 +164,36 @@ def test_gemini_missing_credentials_is_unavailable_and_factory_registers_it() ->
     assert tuple(provider.provider for provider in registry.list()) == (
         ProviderName.GEMINI,
     )
+
+
+def test_gemini_factory_uses_bounded_provider_timeout() -> None:
+    settings = Settings.model_validate(
+        {
+            "default_provider": "gemini",
+            "default_model": MODEL,
+            "gemini_model": MODEL,
+            "gemini_api_key": SecretStr("test-gemini-secret"),
+            "ai_provider_timeout_seconds": 15.0,
+        }
+    )
+    provider = ProviderFactory(settings=settings).create()
+    assert isinstance(provider, GeminiProvider)
+    assert provider._timeout_seconds == 15.0
+
+
+def test_gemini_http_timeout_is_classified_as_provider_timeout() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("provider timed out")
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            provider = GeminiProvider(configuration(), client=client)
+            with pytest.raises(ProviderTimeout):
+                await provider.complete(request())
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize(

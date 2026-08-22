@@ -92,6 +92,42 @@ def test_fallback_retry_and_graceful_degradation() -> None:
     asyncio.run(scenario())
 
 
+def test_fallback_deadline_stops_retries_and_propagates_cancellation() -> None:
+    async def scenario() -> None:
+        fallback = OrchestrationFallback(OrchestrationPolicy(maximum_retries=2))
+        attempts = 0
+        started = asyncio.Event()
+
+        async def blocking() -> str:
+            nonlocal attempts
+            attempts += 1
+            started.set()
+            await asyncio.Event().wait()
+            return "unreachable"
+
+        task = asyncio.create_task(
+            fallback.retry(
+                blocking,
+                deadline=asyncio.get_running_loop().time() + 10,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert attempts == 1
+
+        attempts = 0
+        with pytest.raises(asyncio.TimeoutError):
+            await fallback.retry(
+                blocking,
+                deadline=asyncio.get_running_loop().time() + 0.001,
+            )
+        assert attempts == 1
+
+    asyncio.run(scenario())
+
+
 def test_cost_estimation_and_budget_enforcement() -> None:
     provider = ProviderFactory().create(provider="mock")
     cost = OrchestrationCostEngine().estimate(

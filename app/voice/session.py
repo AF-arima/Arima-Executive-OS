@@ -70,6 +70,9 @@ class VoiceSessionStore:
             raise VoiceSessionAccessDenied("Voice session access denied")
         return session
 
+    async def rollback(self) -> None:
+        await self.database.rollback()
+
     async def update(
         self,
         session_id: UUID,

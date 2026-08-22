@@ -2,7 +2,7 @@ from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.v1.dependencies import AUTHENTICATED_RESPONSES, SessionDependency
 from app.auth.dependencies import get_current_active_user
@@ -11,6 +11,8 @@ from app.core.config import get_settings
 from app.database.models import User
 from app.voice.exceptions import (
     VoicePermissionDenied,
+    VoiceExecutionTimeout,
+    VoiceProviderUnavailable,
     VoiceSessionBusy,
     VoiceSessionAccessDenied,
     VoiceSessionNotFound,
@@ -43,6 +45,7 @@ def gateway(database: SessionDependency):
         database,
         enabled=settings.arima_voice_enabled,
         session_timeout_seconds=settings.arima_voice_session_timeout_seconds,
+        execution_timeout_seconds=settings.arima_voice_execution_timeout_seconds,
     ).create()
 
 
@@ -88,6 +91,7 @@ async def submit_voice_transcript(
     data: VoiceTranscriptInput,
     database: SessionDependency,
     actor: VoiceUser,
+    request: Request,
 ) -> VoiceGatewayResponse:
     settings = get_settings()
     if len(data.transcript) > settings.arima_voice_max_transcript_length:
@@ -104,7 +108,10 @@ async def submit_voice_transcript(
     voice_gateway = gateway(database)
     try:
         return await voice_gateway.handle_transcript(
-            session_id, data.transcript, actor
+            session_id,
+            data.transcript,
+            actor,
+            correlation_id=getattr(request.state, "correlation_id", None),
         )
     except VoiceSessionNotFound as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -114,6 +121,10 @@ async def submit_voice_transcript(
         raise HTTPException(status_code=403, detail=str(error)) from error
     except VoiceSessionBusy as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except VoiceExecutionTimeout as error:
+        raise HTTPException(status_code=504, detail=str(error)) from error
+    except VoiceProviderUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @router.post(

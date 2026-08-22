@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from app.background.context import BackgroundExecutionContext
 from app.core.redaction import safe_failure_detail
 from app.background.schemas import (
@@ -62,7 +64,8 @@ class OrchestrationExecutor(HealthContract):
                     return await self._execute_step(step, context)
 
                 output, step_retries = await self.fallback.retry(
-                    execute_step
+                    execute_step,
+                    deadline=context.execution_deadline,
                 )
                 retries += step_retries
                 actions.append(
@@ -74,6 +77,8 @@ class OrchestrationExecutor(HealthContract):
                         output=output,
                     )
                 )
+            except asyncio.TimeoutError:
+                raise
             except Exception as error:
                 actions.append(
                     ExecutedAction(

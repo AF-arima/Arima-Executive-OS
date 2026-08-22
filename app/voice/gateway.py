@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
@@ -10,6 +12,7 @@ from app.database.models import User
 from app.experience.mapper import ExperienceEventMapper
 from app.orchestration.context import OrchestrationExecutionContext
 from app.orchestration.exceptions import OrchestrationApprovalRequired
+from app.orchestration.exceptions import OrchestrationFallbackExhausted
 from app.orchestration.schemas import OrchestrationResult
 from app.services.permissions import user_roles
 from app.voice.commands import (
@@ -18,7 +21,12 @@ from app.voice.commands import (
     resolve_command,
 )
 from app.voice.events import VoiceEventType
-from app.voice.exceptions import VoicePermissionDenied
+from app.voice.exceptions import (
+    VoiceExecutionTimeout,
+    VoicePermissionDenied,
+    VoiceProviderUnavailable,
+)
+from app.voice.observability import VoiceExecutionObserver
 from app.voice.exceptions import VoiceSessionBusy
 from app.voice.health import voice_health
 from app.voice.schemas import (
@@ -30,6 +38,7 @@ from app.voice.schemas import (
     VoicePanelAction,
     VoiceSession,
     VoiceSessionCreate,
+    VoiceProviderProvenance,
 )
 from app.voice.session import VoiceSessionStore
 from app.voice.state import VoiceState
@@ -98,16 +107,20 @@ class VoiceGateway:
         context_factory: ContextFactory,
         enabled: bool = True,
         stale_session_timeout: timedelta = timedelta(minutes=30),
+        execution_timeout_seconds: float = 7.0,
         experience_mapper: ExperienceEventMapper | None = None,
         conversation_resolver: ConversationResolver | None = None,
+        provider_provenance: VoiceProviderProvenance = "unverified",
     ) -> None:
         self.sessions = sessions
         self.orchestration = orchestration
         self.context_factory = context_factory
         self.enabled = enabled
         self.stale_session_timeout = stale_session_timeout
+        self.execution_timeout_seconds = execution_timeout_seconds
         self.experience_mapper = experience_mapper or ExperienceEventMapper()
         self.conversation_resolver = conversation_resolver
+        self.provider_provenance = provider_provenance
 
     async def create_session(
         self,
@@ -135,7 +148,11 @@ class VoiceGateway:
         session_id: UUID,
         transcript: str,
         actor: User,
+        correlation_id: str | UUID | None = None,
     ) -> VoiceGatewayResponse:
+        observer = VoiceExecutionObserver(correlation_id, session_id)
+        observer.emit("voice_request_started", outcome="started")
+        actor_id = actor.id
         session = await self.sessions.get(session_id, actor.id)
         if session.state is VoiceState.THINKING:
             await self.sessions.recover_stale_thinking(
@@ -165,6 +182,7 @@ class VoiceGateway:
             )
         else:
             session = claimed
+        observer.emit("session_validated", outcome="success")
         events = [
             self._event(
                 VoiceEventType.TRANSCRIPT_FINAL,
@@ -183,11 +201,23 @@ class VoiceGateway:
                     previous_response,
                     events,
                 )
-            return await self._orchestrate(
-                session, transcript, actor, events
+            response = await self._orchestrate(
+                session, transcript, actor, events, observer
             )
-        except Exception:
-            failed = await self.sessions.get(session_id, actor.id)
+            observer.emit("voice_request_completed", outcome="success")
+            return response
+        except asyncio.CancelledError:
+            observer.emit("voice_request_failed", outcome="cancelled")
+            raise
+        except Exception as error:
+            observer.emit(
+                "voice_request_timeout"
+                if isinstance(error, VoiceExecutionTimeout)
+                else "voice_request_failed",
+                outcome="timeout" if isinstance(error, VoiceExecutionTimeout) else "failed",
+            )
+            await self.sessions.rollback()
+            failed = await self.sessions.get(session_id, actor_id)
             if failed.state not in {
                 VoiceState.ERROR,
                 VoiceState.CANCELLED,
@@ -195,7 +225,7 @@ class VoiceGateway:
             }:
                 await self.sessions.update(
                     session_id,
-                    actor.id,
+                    actor_id,
                     state=VoiceState.ERROR,
                 )
             raise
@@ -256,6 +286,7 @@ class VoiceGateway:
         return voice_health(
             enabled=self.enabled,
             orchestration_available=available,
+            provider_provenance=self.provider_provenance,
         )
 
     async def _handle_command(
@@ -336,6 +367,29 @@ class VoiceGateway:
         transcript: str,
         actor: User,
         events: list[VoiceEvent],
+        observer: VoiceExecutionObserver,
+    ) -> VoiceGatewayResponse:
+        deadline = asyncio.get_running_loop().time() + self.execution_timeout_seconds
+        try:
+            return await asyncio.wait_for(
+                self._run_orchestration(
+                    session, transcript, actor, events, deadline, observer
+                ),
+                timeout=self.execution_timeout_seconds,
+            )
+        except asyncio.TimeoutError as error:
+            raise VoiceExecutionTimeout(
+                "Voice provider timed out before completing execution"
+            ) from error
+
+    async def _run_orchestration(
+        self,
+        session: VoiceSession,
+        transcript: str,
+        actor: User,
+        events: list[VoiceEvent],
+        deadline: float,
+        observer: VoiceExecutionObserver,
     ) -> VoiceGatewayResponse:
         session = await self.sessions.update(
             session.session_id,
@@ -349,7 +403,13 @@ class VoiceGateway:
                 session.updated_at,
             )
         )
+        observer.emit("context_started", outcome="started")
         context = await self.context_factory(session, actor, transcript)
+        context.request.metadata["_voice_observer"] = observer
+        observer.emit("conversation_resolved", outcome="success")
+        observer.emit("workspace_resolved", outcome="success")
+        observer.emit("context_completed", outcome="success")
+        context.request.metadata["execution_deadline_monotonic"] = deadline
         session = await self.sessions.update(
             session.session_id,
             actor.id,
@@ -357,8 +417,13 @@ class VoiceGateway:
             run_id=context.run.id,
             correlation_id=context.correlation_id,
         )
+        observer.emit("orchestration_started", outcome="started")
         try:
             result = await self.orchestration.execute(context)
+        except OrchestrationFallbackExhausted as error:
+            raise VoiceProviderUnavailable(
+                "Voice provider was unavailable during execution"
+            ) from error
         except OrchestrationApprovalRequired:
             session = await self.sessions.update(
                 session.session_id,
@@ -536,4 +601,6 @@ class VoiceGateway:
                 voice_events=events,
                 orchestration_result=orchestration_result,
             ),
+            demo=self.provider_provenance == "mock",
+            provider_provenance=self.provider_provenance,
         )

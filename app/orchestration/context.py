@@ -90,6 +90,11 @@ class OrchestrationExecutionContext:
                 "Conversation does not belong to agent"
             )
 
+    @property
+    def execution_deadline(self) -> float | None:
+        value = self.request.metadata.get("execution_deadline_monotonic")
+        return value if isinstance(value, (int, float)) else None
+
 
 class BuiltOrchestrationContext(BaseModel):
     model_config = ConfigDict(extra="forbid")

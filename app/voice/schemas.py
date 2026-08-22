@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,6 +13,9 @@ from app.voice.state import VoiceState
 
 class VoiceSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+VoiceProviderProvenance = Literal["verified", "mock", "unverified"]
 
 
 class VoiceSessionCreate(VoiceSchema):
@@ -94,6 +97,7 @@ class VoiceGatewayResponse(VoiceSchema):
     events: list[VoiceEvent] = Field(default_factory=list)
     experience_events: list[ExperienceEvent] = Field(default_factory=list)
     demo: bool = False
+    provider_provenance: VoiceProviderProvenance = "unverified"
 
 
 class VoiceError(VoiceSchema):
@@ -110,3 +114,4 @@ class VoiceHealth(VoiceSchema):
     session_store: str = "postgresql"
     orchestration_available: bool
     checked_at: datetime
+    provider_provenance: VoiceProviderProvenance

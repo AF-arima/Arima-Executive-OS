@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,7 @@ from app.orchestration.schemas import OrchestrationResult
 from app.schemas.agent import RunTransitionRequest
 from app.services.agent import RunService
 from app.services.audit import record_audit
+from app.voice.observability import observer_from_context
 
 
 class DurableVoiceOrchestration:
@@ -40,7 +42,12 @@ class DurableVoiceOrchestration:
         runs = RunService(self.database)
         try:
             result = await self.engine.execute(context)
+            observer = observer_from_context(context)
+            if observer is not None:
+                observer.emit("persistence_started", outcome="started")
             output = await self._persist_output(context, result)
+            if observer is not None:
+                observer.emit("persistence_completed", outcome="success")
             context.run.model_provider = result.route.provider
             context.run.model_name = result.route.model
             await runs.complete(
@@ -57,6 +64,17 @@ class DurableVoiceOrchestration:
             return result
         except OrchestrationApprovalRequired:
             await runs.wait_for_approval(context.run.id, context.user)
+            raise
+        except asyncio.CancelledError:
+            await runs.fail(
+                context.run.id,
+                RunTransitionRequest(
+                    status=AgentRunStatus.FAILED,
+                    failure_code="voice_ai_execution_cancelled",
+                    failure_message="Voice AI execution was cancelled",
+                ),
+                context.user,
+            )
             raise
         except Exception as error:
             await runs.fail(

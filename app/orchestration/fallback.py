@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -17,14 +18,74 @@ class OrchestrationFallback(HealthContract):
         self.policy = policy or OrchestrationPolicy()
 
     async def retry(
-        self, operation: Callable[[], Awaitable[ResultT]]
+        self,
+        operation: Callable[[], Awaitable[ResultT]],
+        *,
+        deadline: float | None = None,
+        observer: Callable[..., None] | None = None,
+        provider_name: str | None = None,
     ) -> tuple[ResultT, int]:
         last_error: Exception | None = None
         for retry in range(self.policy.maximum_retries + 1):
+            attempt = retry + 1
+            if observer is not None and provider_name is not None:
+                observer(
+                    "provider_attempt_started",
+                    attempt=attempt,
+                    provider=provider_name,
+                    outcome="started",
+                )
+            remaining = None if deadline is None else deadline - asyncio.get_running_loop().time()
+            if remaining is not None and remaining <= 0:
+                raise asyncio.TimeoutError("Orchestration execution deadline exceeded")
             try:
-                return await operation(), retry
+                result = (
+                    await operation()
+                    if remaining is None
+                    else await asyncio.wait_for(operation(), timeout=remaining)
+                )
+                if observer is not None and provider_name is not None:
+                    observer(
+                        "provider_attempt_completed",
+                        attempt=attempt,
+                        provider=provider_name,
+                        outcome="success",
+                    )
+                return result, retry
+            except asyncio.CancelledError:
+                if observer is not None and provider_name is not None:
+                    observer(
+                        "provider_attempt_failed",
+                        attempt=attempt,
+                        provider=provider_name,
+                        outcome="cancelled",
+                    )
+                raise
+            except asyncio.TimeoutError:
+                if observer is not None and provider_name is not None:
+                    observer(
+                        "provider_attempt_failed",
+                        attempt=attempt,
+                        provider=provider_name,
+                        outcome="timeout",
+                    )
+                raise
             except Exception as error:
                 last_error = error
+                if observer is not None and provider_name is not None:
+                    observer(
+                        "provider_attempt_failed",
+                        attempt=attempt,
+                        provider=provider_name,
+                        outcome="failed",
+                    )
+                    if attempt <= self.policy.maximum_retries:
+                        observer(
+                            "retry_started",
+                            attempt=attempt + 1,
+                            provider=provider_name,
+                            outcome="started",
+                        )
         raise OrchestrationFallbackExhausted(
             safe_failure_detail(
                 "Orchestration fallback exhausted",

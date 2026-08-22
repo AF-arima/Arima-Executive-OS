@@ -7,11 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Role
 from app.orchestration.exceptions import OrchestrationApprovalRequired
+from app.orchestration.exceptions import OrchestrationFallbackExhausted
 from app.orchestration.factory import OrchestrationFactory
 from app.voice.exceptions import (
     InvalidVoiceStateTransition,
     VoiceSessionBusy,
     VoicePermissionDenied,
+    VoiceExecutionTimeout,
+    VoiceProviderUnavailable,
 )
 from app.services.exceptions import ResourceNotFoundError
 from app.voice.gateway import (
@@ -45,6 +48,15 @@ class ApprovalEngine:
     async def execute(self, context):
         del context
         raise OrchestrationApprovalRequired
+
+    async def health(self):
+        return []
+
+
+class UnavailableEngine:
+    async def execute(self, context):
+        del context
+        raise OrchestrationFallbackExhausted("provider unavailable")
 
     async def health(self):
         return []
@@ -99,6 +111,7 @@ async def build_gateway(
     context_error: bool = False,
     clock: Callable[[], datetime] | None = None,
     stale_session_timeout: timedelta = timedelta(minutes=30),
+    execution_timeout_seconds: float = 7.0,
     sessions: VoiceSessionStore | None = None,
 ):
     context = await make_context(database)
@@ -134,6 +147,7 @@ async def build_gateway(
         context_factory=context_factory,
         conversation_resolver=FixedConversationResolver(context.conversation.id),
         stale_session_timeout=stale_session_timeout,
+        execution_timeout_seconds=execution_timeout_seconds,
     )
     return gateway, context.user, engine
 
@@ -184,6 +198,52 @@ def test_unknown_request_delegates_to_orchestration() -> None:
                 event.type.value == "data_object_created"
                 for event in response.experience_events
             )
+
+    asyncio.run(scenario())
+
+
+def test_provider_timeout_is_bounded_and_marks_session_error() -> None:
+    async def scenario() -> None:
+        async with sqlite_session() as database:
+            gateway, actor, engine = await build_gateway(
+                database, execution_timeout_seconds=0.01
+            )
+            blocking_engine = BlockingEngine(engine)
+            gateway.orchestration = blocking_engine
+            session, _ = await gateway.create_session(
+                VoiceSessionCreate(), actor
+            )
+
+            with pytest.raises(VoiceExecutionTimeout, match="timed out"):
+                await gateway.handle_transcript(
+                    session.session_id, "Analyse this strategic decision", actor
+                )
+
+            failed = await gateway.sessions.get(session.session_id, actor.id)
+            assert failed.state is VoiceState.ERROR
+            assert not blocking_engine.release.is_set()
+
+    asyncio.run(scenario())
+
+
+def test_provider_unavailability_is_explicit() -> None:
+    async def scenario() -> None:
+        async with sqlite_session() as database:
+            gateway, actor, _ = await build_gateway(database)
+            gateway.orchestration = UnavailableEngine()
+            session, _ = await gateway.create_session(
+                VoiceSessionCreate(), actor
+            )
+
+            with pytest.raises(
+                VoiceProviderUnavailable, match="provider was unavailable"
+            ):
+                await gateway.handle_transcript(
+                    session.session_id, "Analyse this strategic decision", actor
+                )
+
+            failed = await gateway.sessions.get(session.session_id, actor.id)
+            assert failed.state is VoiceState.ERROR
 
     asyncio.run(scenario())
 

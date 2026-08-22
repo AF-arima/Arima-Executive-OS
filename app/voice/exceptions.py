@@ -24,3 +24,11 @@ class VoicePermissionDenied(VoiceError):
 
 class VoiceGatewayUnavailable(VoiceError):
     pass
+
+
+class VoiceExecutionTimeout(VoiceError):
+    """The provider did not complete within the voice execution deadline."""
+
+
+class VoiceProviderUnavailable(VoiceError):
+    """The verified provider could not execute the voice request."""

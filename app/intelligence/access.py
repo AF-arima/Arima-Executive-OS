@@ -14,11 +14,46 @@ from app.database.models import (
     WorkspaceAgentGrant,
     WorkspaceMembership,
 )
+from app.database.repositories.agent import AgentDefinitionRepository
 from app.services.permissions import can_invoke_agents
 
 
 class IntelligenceAccessError(PermissionError):
     pass
+
+
+async def provision_default_agent_grant(
+    session: AsyncSession,
+    *,
+    workspace_id: UUID,
+    granted_by_id: UUID,
+) -> WorkspaceAgentGrant | None:
+    """Attach the active platform default agent to a new workspace.
+
+    The platform agent must already exist and be active; this helper never
+    creates or globally enables an agent.  Returning ``None`` keeps account
+    registration independent from optional agent-platform bootstrap.
+    """
+    agent = await AgentDefinitionRepository(session).get_active_default()
+    if agent is None:
+        return None
+    grant = await session.scalar(
+        select(WorkspaceAgentGrant).where(
+            WorkspaceAgentGrant.workspace_id == workspace_id,
+            WorkspaceAgentGrant.agent_id == agent.id,
+        )
+    )
+    if grant is None:
+        grant = WorkspaceAgentGrant(
+            workspace_id=workspace_id,
+            agent_id=agent.id,
+            granted_by_id=granted_by_id,
+        )
+        session.add(grant)
+    elif grant.revoked_at is not None:
+        grant.revoked_at = None
+        grant.granted_by_id = granted_by_id
+    return grant
 
 
 def require_workspace_affinity(

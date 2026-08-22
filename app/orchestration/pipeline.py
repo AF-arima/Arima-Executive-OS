@@ -24,8 +24,13 @@ from app.orchestration.context import (
 from app.orchestration.cost import OrchestrationCostEngine
 from app.orchestration.executor import OrchestrationExecutor
 from app.orchestration.fallback import OrchestrationFallback
+from app.voice.observability import observer_from_context
 from app.orchestration.health import HealthContract
 from app.orchestration.memory import OrchestrationMemory
+from app.orchestration.market_response import (
+    detect_response_language,
+    market_response,
+)
 from app.orchestration.native_tools import (
     NativeExecutionContext,
     NativeToolLoop,
@@ -122,6 +127,13 @@ class OrchestrationPipeline(HealthContract):
         profile = self.optimizer.model_profile(context.request, intent)
         required = self._provider_capabilities(context, profile)
         provider = await self.provider_router.select(required)
+        observer = observer_from_context(context)
+        if observer is not None:
+            observer.emit(
+                "provider_selected",
+                provider=provider.provider.value,
+                outcome="success",
+            )
         model = self.model_router.select(provider, profile)
         route = RouteSelection(
             agent_id=agent.agent_id,
@@ -177,7 +189,10 @@ class OrchestrationPipeline(HealthContract):
                         messages=provider_messages,
                         max_output_tokens=context.request.max_output_tokens,
                         context=native_context,
-                    )
+                    ),
+                    deadline=context.execution_deadline,
+                    observer=observer.emit if observer is not None else None,
+                    provider_name=provider.provider.value,
                 )
             )
             await self._record_native_executions(context, native_executions)
@@ -190,9 +205,18 @@ class OrchestrationPipeline(HealthContract):
                         max_output_tokens=context.request.max_output_tokens,
                         json_mode=context.request.require_json,
                     )
-                )
+                ),
+                deadline=context.execution_deadline,
+                observer=observer.emit if observer is not None else None,
+                provider_name=provider.provider.value,
             )
         retries += provider_retries
+        if observer is not None:
+            observer.emit(
+                "response_received",
+                provider=provider.provider.value,
+                outcome="success",
+            )
         validated = self.response_validator.validate(
             response.content,
             allowed_evidence_ids=frozenset(
@@ -200,6 +224,17 @@ class OrchestrationPipeline(HealthContract):
                 for item in context.request.metadata.get("evidence_ids", [])
             ),
         )
+        deterministic_market_response = market_response(
+            actions, language=detect_response_language(context.request.content)
+        )
+        if deterministic_market_response is not None:
+            validated = self.response_validator.validate(
+                deterministic_market_response,
+                allowed_evidence_ids=frozenset(
+                    str(item)
+                    for item in context.request.metadata.get("evidence_ids", [])
+                ),
+            )
         tool_actions = [
             action
             for action in actions
@@ -451,9 +486,12 @@ class OrchestrationPipeline(HealthContract):
             item = data.get("evidence") if isinstance(data, dict) else None
             if not isinstance(item, dict):
                 continue
-            evidence_id, content = item.get("evidence_id"), item.get("content")
-            if isinstance(evidence_id, str) and isinstance(content, str):
-                evidence.append({"evidence_id": evidence_id, "content": content})
-                evidence_ids.append(evidence_id)
+            evidence_id_value = item.get("evidence_id")
+            content_value = item.get("content")
+            if isinstance(evidence_id_value, str) and isinstance(content_value, str):
+                evidence.append(
+                    {"evidence_id": evidence_id_value, "content": content_value}
+                )
+                evidence_ids.append(evidence_id_value)
         context.request.metadata["provider_evidence"] = evidence
         context.request.metadata["evidence_ids"] = evidence_ids
