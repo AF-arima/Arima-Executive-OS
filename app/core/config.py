@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     password_reset_rate_limit_per_hour: int = Field(
         default=5, ge=1, le=1_000
     )
+    withdrawal_intake_rate_limit_per_minute: int = Field(
+        default=3, ge=1, le=100
+    )
     verification_token_expire_hours: int = Field(default=24, ge=1, le=168)
     password_reset_token_expire_minutes: int = Field(
         default=60, ge=5, le=1_440

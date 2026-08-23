@@ -12,6 +12,61 @@ class EmailTemplate:
     html_body: str
 
 
+def withdrawal_intake_email(
+    *,
+    full_name: str,
+    amount_eth: Decimal,
+    wallet_address: str,
+    network: str,
+    note: str | None,
+    account_email: str,
+    workspace_reference: str,
+    submitted_at: str,
+) -> EmailTemplate:
+    safe = {
+        "full_name": escape(full_name),
+        "amount_eth": escape(str(amount_eth)),
+        "wallet_address": escape(wallet_address),
+        "network": escape(network),
+        "note": escape(note or "No note provided"),
+        "account_email": escape(account_email),
+        "workspace_reference": escape(workspace_reference),
+        "submitted_at": escape(submitted_at),
+    }
+    text_body = (
+        "New withdrawal request intake submission (no funds moved).\n\n"
+        f"Full name: {full_name}\n"
+        f"Amount (ETH): {amount_eth}\n"
+        f"Wallet address: {wallet_address}\n"
+        f"Network: {network}\n"
+        f"Note: {note or 'No note provided'}\n"
+        f"Account email: {account_email}\n"
+        f"Workspace: {workspace_reference}\n"
+        f"Submitted at: {submitted_at}\n\n"
+        "The customer was told that the team will respond within 48 hours."
+    )
+    html_body = (
+        "<h2>New withdrawal request intake submission</h2>"
+        "<p><strong>No funds were moved, reserved, or recorded.</strong></p>"
+        "<ul>"
+        f"<li>Full name: {safe['full_name']}</li>"
+        f"<li>Amount (ETH): {safe['amount_eth']}</li>"
+        f"<li>Wallet address: {safe['wallet_address']}</li>"
+        f"<li>Network: {safe['network']}</li>"
+        f"<li>Note: {safe['note']}</li>"
+        f"<li>Account email: {safe['account_email']}</li>"
+        f"<li>Workspace: {safe['workspace_reference']}</li>"
+        f"<li>Submitted at: {safe['submitted_at']}</li>"
+        "</ul>"
+        "<p>The customer was told that the team will respond within 48 hours.</p>"
+    )
+    return EmailTemplate(
+        subject=f"Withdrawal request intake: {full_name}",
+        text_body=text_body,
+        html_body=html_body,
+    )
+
+
 def verification_email(
     *,
     recipient_name: str,
