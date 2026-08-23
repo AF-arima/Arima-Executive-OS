@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -11,6 +12,8 @@ from app.database.models import (
     TaskPriority,
     TaskStatus,
     User,
+    Workspace,
+    WorkspaceMembership,
 )
 from app.database.repositories import (
     ActivityRepository,
@@ -22,6 +25,7 @@ from app.schemas.analytics import (
     ProjectAnalyticsItem,
     ProjectAnalyticsList,
     ProjectAnalyticsSortField,
+    DashboardProvenance,
     TaskAnalyticsResponse,
     TimeSeriesPoint,
     WorkloadAnalyticsItem,
@@ -76,6 +80,7 @@ class AnalyticsService:
             default_zone=zone,
             maximum=MAX_GENERAL_RANGE,
         )
+        workspace = await self._workspace_for(actor)
         scope = analytics_scope(actor)
         key = self._dashboard_cache_key(
             actor=actor,
@@ -111,6 +116,11 @@ class AnalyticsService:
             end=end,
         )
         summary = DashboardSummary(
+            provenance=DashboardProvenance(
+                source="server_persisted",
+                record_type="workspace",
+                workspace_id=workspace.id,
+            ),
             total_projects=raw.total_projects,
             active_projects=raw.active_projects,
             archived_projects=raw.archived_projects,
@@ -148,6 +158,30 @@ class AnalyticsService:
             expected_generation=cache_generation,
         )
         return summary
+
+    async def _workspace_for(self, actor: User) -> Workspace:
+        statement = (
+            select(Workspace)
+            .outerjoin(
+                WorkspaceMembership,
+                WorkspaceMembership.workspace_id == Workspace.id,
+            )
+            .where(
+                (Workspace.owner_id == actor.id)
+                | (WorkspaceMembership.user_id == actor.id)
+            )
+            .order_by(Workspace.created_at)
+        )
+        workspaces = list((await self.session.scalars(statement)).all())
+        if not workspaces:
+            raise InvalidAnalyticsRequestError(
+                "Authorized workspace is unavailable"
+            )
+        if len(workspaces) != 1:
+            raise InvalidAnalyticsRequestError(
+                "Authorized workspace selection is ambiguous"
+            )
+        return workspaces[0]
 
     async def project_analytics(
         self,

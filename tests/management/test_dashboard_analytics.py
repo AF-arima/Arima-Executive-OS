@@ -1,9 +1,14 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
 
+from sqlalchemy import select
+
+from app.database.models import Workspace
 from app.schemas.analytics import DashboardSummary
 from app.services.cache import InMemoryDashboardCache
 from tests.auth.conftest import AuthTestContext
+from tests.auth.helpers import bearer, csrf_headers, email_token, login_user, register_user
 from tests.management.test_projects_api import prepare_user
 
 UTC = timezone.utc
@@ -15,6 +20,11 @@ def test_cache_generation_prevents_stale_repopulation() -> None:
         generation = await cache.generation()
         now = datetime.now(UTC)
         summary = DashboardSummary(
+            provenance={
+                "source": "server_persisted",
+                "record_type": "workspace",
+                "workspace_id": uuid4(),
+            },
             total_projects=0,
             active_projects=0,
             archived_projects=0,
@@ -135,6 +145,63 @@ def test_dashboard_empty_rates_and_timezone_validation(
         params={"timezone": "Not/A_Zone"},
     )
     assert bad_timezone.status_code == 422
+
+
+def test_new_user_dashboard_and_portfolio_are_empty_but_provenanced(
+    management_context: AuthTestContext,
+) -> None:
+    user = register_user(
+        management_context,
+        "new-dashboard-user@example.com",
+        verify=False,
+    )
+    verification = management_context.client.post(
+        "/api/v1/auth/verify-email",
+        json={"token": email_token(management_context, "verify")},
+        headers=csrf_headers(management_context),
+    )
+    assert verification.status_code == 200
+
+    session = login_user(management_context, "new-dashboard-user@example.com")
+    headers = bearer(session["access_token"])
+
+    async def workspace_id() -> str:
+        async with management_context.session_factory() as db:
+            workspace = await db.scalar(
+                select(Workspace).where(Workspace.owner_id == UUID(str(user["id"])))
+            )
+            assert workspace is not None
+            return str(workspace.id)
+
+    canonical_workspace_id = asyncio.run(workspace_id())
+    dashboard = management_context.client.get(
+        "/api/v1/dashboard/summary",
+        headers=headers,
+        params={"workspace_id": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert dashboard.status_code == 200
+    dashboard_body = dashboard.json()
+    assert dashboard_body["provenance"] == {
+        "source": "server_persisted",
+        "record_type": "workspace",
+        "workspace_id": canonical_workspace_id,
+    }
+    assert dashboard_body["total_projects"] == 0
+    assert dashboard_body["total_tasks"] == 0
+    assert dashboard_body["completion_rate"] == 0
+    assert dashboard_body["overdue_rate"] == 0
+
+    portfolio = management_context.client.get(
+        "/api/v1/portfolio",
+        headers=headers,
+    )
+    assert portfolio.status_code == 200
+    portfolio_body = portfolio.json()
+    assert portfolio_body["workspace_id"] == canonical_workspace_id
+    assert portfolio_body["user_id"] == user["id"]
+    assert portfolio_body["balances"] == []
+    assert portfolio_body["positions"] == []
+    assert portfolio_body["recent_ledger_activity"] == []
 
 
 def test_dashboard_permissions_cache_refresh_and_invalidation(

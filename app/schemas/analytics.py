@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -32,9 +33,18 @@ class WorkloadSortField(str, Enum):
     WORKLOAD_SCORE = "workload_score"
 
 
+class DashboardProvenance(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["server_persisted"]
+    record_type: Literal["workspace"]
+    workspace_id: UUID
+
+
 class DashboardSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    provenance: DashboardProvenance
     total_projects: int = Field(ge=0)
     active_projects: int = Field(ge=0)
     archived_projects: int = Field(ge=0)
