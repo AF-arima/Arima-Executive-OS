@@ -18,6 +18,8 @@ from app.database.models import (
     Workspace,
     WorkspaceAgentGrant,
     WorkspaceMembership,
+    WithdrawalCircuitBreaker,
+    WithdrawalCircuitState,
 )
 from tests.auth.conftest import AuthTestContext
 from tests.auth.helpers import (
@@ -110,6 +112,51 @@ def test_founder_control_requires_server_side_founder_authorization(
         "voice",
     }
     assert "development-only-security-token-secret-change-me" not in str(body)
+
+
+def test_founder_customer_inspection_and_circuit_controls_remain_server_authorized(
+    management_context: AuthTestContext,
+    founder_allowlist: None,
+) -> None:
+    register_user(management_context, "founder@example.com")
+    register_user(management_context, "customer@example.com")
+    register_user(management_context, "normal@example.com")
+    grant_role(management_context, "founder@example.com", "administrator")
+
+    async def seed_circuit() -> UUID:
+        async with management_context.session_factory() as session:
+            customer = await session.scalar(select(User).where(User.email == "customer@example.com"))
+            assert customer is not None
+            workspace = await session.scalar(select(Workspace).where(Workspace.owner_id == customer.id))
+            assert workspace is not None
+            session.add(WithdrawalCircuitBreaker(workspace_id=workspace.id, state=WithdrawalCircuitState.ENABLED.value))
+            await session.commit()
+            return workspace.id
+
+    workspace_id = asyncio.run(seed_circuit())
+    founder_headers = bearer(login_user(management_context, "founder@example.com")["access_token"])
+    normal_headers = bearer(login_user(management_context, "normal@example.com")["access_token"])
+
+    assert management_context.client.get("/api/v1/support/customers?q=customer@example.com", headers=normal_headers).status_code == 403
+    search = management_context.client.get("/api/v1/support/customers?q=customer@example.com", headers=founder_headers)
+    assert search.status_code == 200
+    assert search.json()[0]["email"] == "customer@example.com"
+    customer_id = search.json()[0]["id"]
+    detail = management_context.client.get(f"/api/v1/support/customers/{customer_id}", headers=founder_headers)
+    assert detail.status_code == 200
+    assert detail.json()["email"] == "customer@example.com"
+    assert detail.json()["workspace_id"] == str(workspace_id)
+
+    circuit_path = f"/api/v1/withdrawals/operations/circuit/{workspace_id}"
+    assert management_context.client.get(circuit_path, headers=normal_headers).status_code == 403
+    assert management_context.client.get(circuit_path, headers=founder_headers).json()["state"] == "enabled"
+    missing_csrf = management_context.client.post(circuit_path, headers=founder_headers, json={"state": "paused", "reason": "test"})
+    assert missing_csrf.status_code == 403
+    changed = management_context.client.post(circuit_path, headers={**founder_headers, **csrf_headers(management_context)}, json={"state": "paused", "reason": "maintenance"})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["state"] == "paused"
+    assert management_context.client.post(circuit_path, headers={**normal_headers, **csrf_headers(management_context)}, json={"state": "enabled", "reason": "forbidden"}).status_code == 403
+    assert management_context.client.get(circuit_path, headers=founder_headers).json()["state"] == "paused"
 
 
 def test_founder_manual_evidence_is_csrf_protected_and_audited(

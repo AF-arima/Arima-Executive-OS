@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from app.auth.csrf import require_valid_csrf
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +26,10 @@ router = APIRouter(prefix="/withdrawals", tags=["withdrawals"])
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
 CurrentUser = Annotated[User, Depends(get_current_active_user)]
 FounderUser = Annotated[User, Depends(require_founder_control)]
+
+
+def _csrf_guard(request: Request) -> None:
+    require_valid_csrf(request)
 
 
 def _response(item: WithdrawalRequest) -> WithdrawalResponse:
@@ -108,6 +113,12 @@ async def cancel_withdrawal(request_id: UUID, data: WithdrawalTransitionRequest,
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
+@router.post("/operations/circuit/{workspace_id}", response_model=CircuitBreakerResponse)
+async def set_circuit(workspace_id: UUID, data: CircuitBreakerRequest, actor: FounderUser, session: SessionDependency, _csrf: Annotated[None, Depends(_csrf_guard)]) -> CircuitBreakerResponse:
+    row = await WithdrawalService(session).change_circuit(workspace_id, WithdrawalCircuitState(data.state), data.reason, actor, require_authoritative_context=True)
+    return CircuitBreakerResponse(workspace_id=row.workspace_id, state=WithdrawalCircuitState(row.state).value, reason=row.reason, changed_by_id=row.changed_by_id, changed_at=row.changed_at)
+
+
 @router.post("/operations/{request_id}/{target}", response_model=WithdrawalResponse)
 async def transition_withdrawal(request_id: UUID, target: str, data: WithdrawalTransitionRequest, actor: FounderUser, session: SessionDependency) -> WithdrawalResponse:
     if target not in {"under_review", "approved", "rejected", "cancelled", "blocked"}:
@@ -133,10 +144,4 @@ async def get_circuit(workspace_id: UUID, actor: FounderUser, session: SessionDe
     except (CircuitStateUnavailableError, OperationsError, FinancialContextError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     await session.commit()
-    return CircuitBreakerResponse(workspace_id=row.workspace_id, state=WithdrawalCircuitState(row.state).value, reason=row.reason, changed_by_id=row.changed_by_id, changed_at=row.changed_at)
-
-
-@router.post("/operations/circuit/{workspace_id}", response_model=CircuitBreakerResponse)
-async def set_circuit(workspace_id: UUID, data: CircuitBreakerRequest, actor: FounderUser, session: SessionDependency) -> CircuitBreakerResponse:
-    row = await WithdrawalService(session).change_circuit(workspace_id, WithdrawalCircuitState(data.state), data.reason, actor, require_authoritative_context=True)
     return CircuitBreakerResponse(workspace_id=row.workspace_id, state=WithdrawalCircuitState(row.state).value, reason=row.reason, changed_by_id=row.changed_by_id, changed_at=row.changed_at)
