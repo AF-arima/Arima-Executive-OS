@@ -10,9 +10,6 @@ from tests.auth.conftest import AuthTestContext
 from tests.auth.helpers import bearer, login_user, register_user
 
 
-pytest_plugins = ("tests.auth.conftest",)
-
-
 def valid_payload() -> dict[str, str]:
     return {
         "full_name": "Ada Lovelace",
