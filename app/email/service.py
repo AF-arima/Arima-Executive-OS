@@ -9,6 +9,7 @@ from app.email.templates import (
     password_reset_email,
     security_alert_email,
     verification_email,
+    withdrawal_intake_email,
     welcome_email,
     withdrawal_received_email,
 )
@@ -111,6 +112,33 @@ class TransactionalEmailService:
             support_email=str(self.settings.email_from_address or "support@arimafinance.xyz"),
         )
         await self._send(email, template.subject, template.text_body, template.html_body)
+
+    async def send_withdrawal_intake(
+        self,
+        *,
+        recipient: str | None,
+        full_name: str,
+        amount_eth,
+        wallet_address: str,
+        network: str,
+        note: str | None,
+        account_email: str,
+        workspace_reference: str,
+        submitted_at,
+    ) -> None:
+        if not recipient:
+            raise EmailDeliveryError("Withdrawal intake recipient is not configured")
+        template = withdrawal_intake_email(
+            full_name=full_name,
+            amount_eth=amount_eth,
+            wallet_address=wallet_address,
+            network=network,
+            note=note,
+            account_email=account_email,
+            workspace_reference=workspace_reference,
+            submitted_at=submitted_at.isoformat(),
+        )
+        await self._send(recipient, template.subject, template.text_body, template.html_body)
 
     async def _send(
         self,
