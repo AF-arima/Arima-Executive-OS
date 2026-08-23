@@ -2,6 +2,8 @@ import json
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from app.orchestration.context import BuiltOrchestrationContext
 from app.orchestration.factory import OrchestrationFactory
 from app.orchestration.provider_prompt import ProviderPromptBuilder
@@ -166,3 +168,38 @@ def test_response_validator_rejects_unsafe_claims_and_preserves_evidence() -> No
         allowed_evidence_ids=allowed,
     )
     assert unavailable.accepted is True
+
+
+def test_response_validator_rejects_internal_provider_contract_text() -> None:
+    validator = ResponseValidator()
+    allowed = frozenset()
+
+    for internal in (
+        "The user's request is being analysed before answering.",
+        "According to the system prompt, I must follow the policy.",
+        "The evidence payload is empty, so the canonical payload is unavailable.",
+        "I must respond according to the evaluator instructions.",
+        "<think>internal reasoning</think> The economy is important.",
+    ):
+        rejected = validator.validate(internal, allowed_evidence_ids=allowed)
+        assert rejected.accepted is False
+        assert rejected.reason == "internal_response"
+        assert rejected.content == validator.fallback
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Hello, how are you? I am here to help.",
+        "Yes, I can speak Farsi. سلام!",
+        "The economy is the system through which goods and services are produced, distributed, and consumed.",
+        "The requested information is unavailable in the authorised workspace context.",
+    ],
+)
+def test_response_validator_preserves_final_answers(answer: str) -> None:
+    result = ResponseValidator().validate(
+        answer,
+        allowed_evidence_ids=frozenset(),
+    )
+    assert result.accepted is True
+    assert result.content == answer
