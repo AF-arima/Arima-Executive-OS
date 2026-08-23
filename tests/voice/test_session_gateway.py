@@ -213,13 +213,14 @@ def test_provider_timeout_is_bounded_and_marks_session_error() -> None:
             session, _ = await gateway.create_session(
                 VoiceSessionCreate(), actor
             )
+            actor_id = actor.id
 
             with pytest.raises(VoiceExecutionTimeout, match="timed out"):
                 await gateway.handle_transcript(
                     session.session_id, "Analyse this strategic decision", actor
                 )
 
-            failed = await gateway.sessions.get(session.session_id, actor.id)
+            failed = await gateway.sessions.get(session.session_id, actor_id)
             assert failed.state is VoiceState.ERROR
             assert not blocking_engine.release.is_set()
 
