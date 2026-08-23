@@ -146,6 +146,48 @@ def test_gemini_success_preserves_the_provider_response_language(
     asyncio.run(scenario())
 
 
+def test_gemini_omits_thought_parts_from_user_response() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "thought": True,
+                                    "text": "Internal reasoning must not be exposed.",
+                                },
+                                {
+                                    "text": "The economy is the system of production, trade, and consumption.",
+                                },
+                                {
+                                    "text": " It shapes how resources and goods move through society.",
+                                },
+                            ]
+                        },
+                        "finishReason": "STOP",
+                    }
+                ]
+            },
+        )
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            provider = GeminiProvider(configuration(), client=client)
+            result = await provider.complete(request())
+        assert result.content == (
+            "The economy is the system of production, trade, and consumption."
+            " It shapes how resources and goods move through society."
+        )
+        assert "Internal reasoning" not in result.content
+
+    asyncio.run(scenario())
+
+
 def test_gemini_missing_credentials_is_unavailable_and_factory_registers_it() -> None:
     missing = GeminiProvider(configuration(api_key=None))
     health = asyncio.run(missing.health())

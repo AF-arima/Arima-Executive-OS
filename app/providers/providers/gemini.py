@@ -254,7 +254,9 @@ class GeminiProvider(ProviderAdapter):
         text = "".join(
             part.get("text", "")
             for part in parts
-            if isinstance(part, dict) and isinstance(part.get("text"), str)
+            if isinstance(part, dict)
+            and part.get("thought") is not True
+            and isinstance(part.get("text"), str)
         ).strip()
         if not text:
             raise ProviderUnavailable("Gemini provider returned no usable output")
