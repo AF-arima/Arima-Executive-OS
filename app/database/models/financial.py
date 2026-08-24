@@ -5,7 +5,7 @@ from decimal import Decimal
 from enum import Enum
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, JSON, Numeric, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, JSON, Numeric, String, Text, UniqueConstraint, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -38,11 +38,17 @@ class PortfolioStatus(str, Enum):
 
 class FinancialAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "financial_accounts"
-    __table_args__ = (UniqueConstraint("workspace_id", "user_id", "asset", name="uq_financial_account_workspace_user_asset"),)
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "user_id", "asset", name="uq_financial_account_workspace_user_asset"),
+        Index("uq_financial_account_workspace_clearing_asset", "workspace_id", "asset", unique=True, sqlite_where=text("account_kind = 'clearing'"), postgresql_where=text("account_kind = 'clearing'")),
+        CheckConstraint("account_kind IN ('customer', 'clearing')", name="ck_financial_account_kind"),
+        CheckConstraint("(account_kind = 'customer' AND user_id IS NOT NULL) OR (account_kind = 'clearing' AND user_id IS NULL)", name="ck_financial_account_owner"),
+    )
 
     workspace_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False)
-    user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
     asset: Mapped[str] = mapped_column(String(32), nullable=False)
+    account_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="customer")
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="active")
 
 
@@ -85,6 +91,7 @@ class FinancialTransaction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(80), nullable=False)
     provenance: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trade_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("settled_trades.id", ondelete="SET NULL"), nullable=True, index=True)
 
 
 class LedgerEntry(UUIDPrimaryKeyMixin, Base):

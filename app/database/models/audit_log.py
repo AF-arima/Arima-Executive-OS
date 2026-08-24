@@ -56,6 +56,8 @@ class AuditEntity(str, Enum):
     ACCOUNT = "account"
     WITHDRAWAL = "withdrawal"
     WITHDRAWAL_CIRCUIT_BREAKER = "withdrawal_circuit_breaker"
+    DOCUMENT = "document"
+    TRADE = "trade"
 
 
 class AuditLog(UUIDPrimaryKeyMixin, Base):

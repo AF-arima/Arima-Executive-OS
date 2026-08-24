@@ -54,12 +54,14 @@ class PortfolioService:
             raise PortfolioAuthorizationError("Authorized portfolio identity is unavailable")
         if actor.id != target.id and not has_founder_control_access(actor):
             raise PortfolioAuthorizationError("Actor is not authorized for this portfolio")
+        workspace: Workspace | None
         if workspace_id is None:
             workspace = await self.workspace_for(user_id)
         else:
-            workspace = await self.session.scalar(select(Workspace).outerjoin(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id).where(
+            selected_workspace = await self.session.scalar(select(Workspace).outerjoin(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id).where(
                 Workspace.id == workspace_id, (Workspace.owner_id == user_id) | (WorkspaceMembership.user_id == user_id)
             ))
+            workspace = selected_workspace
         if workspace is None:
             raise LookupError("Portfolio workspace not found")
         if require_authoritative_context:

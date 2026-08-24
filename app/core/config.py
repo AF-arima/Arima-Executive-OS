@@ -234,6 +234,11 @@ class Settings(BaseSettings):
         default=None, min_length=32, max_length=256
     )
     ai_execution_enabled: bool = True
+    document_storage_max_bytes: int = Field(default=25 * 1024 * 1024, ge=1, le=100 * 1024 * 1024)
+    r2_endpoint_url: str | None = None
+    r2_bucket: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: SecretStr | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

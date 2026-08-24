@@ -40,6 +40,7 @@ def ledger_request_fingerprint(
     *, workspace_id: UUID, user_id: UUID | None, actor_id: UUID | None,
     transaction_type: str, source: str, reference: str | None,
     lines: tuple[LedgerLine, ...],
+    trade_id: UUID | None = None,
 ) -> str:
     payload = {
         "workspace_id": str(workspace_id),
@@ -48,6 +49,7 @@ def ledger_request_fingerprint(
         "transaction_type": transaction_type,
         "source": source,
         "reference": reference,
+        "trade_id": str(trade_id) if trade_id else None,
         "lines": [
             {"account_id": str(line.account_id), "asset": line.asset.upper(),
              "direction": line.direction.value, "bucket": line.bucket.value,
@@ -80,20 +82,24 @@ class LedgerService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def account(self, *, workspace_id: UUID, user_id: UUID, asset: str, lock: bool = False) -> FinancialAccount:
+    async def account(self, *, workspace_id: UUID, user_id: UUID | None, asset: str, lock: bool = False, account_kind: str = "customer") -> FinancialAccount:
         normalized = asset.upper()
         statement = select(FinancialAccount).where(
             FinancialAccount.workspace_id == workspace_id,
-            FinancialAccount.user_id == user_id,
             FinancialAccount.asset == normalized,
+            FinancialAccount.account_kind == account_kind,
         )
+        if account_kind == "customer":
+            statement = statement.where(FinancialAccount.user_id == user_id)
+        else:
+            statement = statement.where(FinancialAccount.user_id.is_(None))
         if lock:
             statement = statement.with_for_update()
         account = await self.session.scalar(statement)
         if account is None:
             try:
                 async with self.session.begin_nested():
-                    account = FinancialAccount(workspace_id=workspace_id, user_id=user_id, asset=normalized)
+                    account = FinancialAccount(workspace_id=workspace_id, user_id=user_id, asset=normalized, account_kind=account_kind)
                     self.session.add(account)
                     await self.session.flush()
             except IntegrityError:
@@ -113,6 +119,7 @@ class LedgerService:
         lines: Iterable[LedgerLine],
         reference: str | None = None,
         provenance: dict | None = None,
+        trade_id: UUID | None = None,
     ) -> FinancialTransaction:
         materialized = tuple(lines)
         if not materialized:
@@ -120,7 +127,7 @@ class LedgerService:
         fingerprint = ledger_request_fingerprint(
             workspace_id=workspace_id, user_id=user_id, actor_id=actor_id,
             transaction_type=transaction_type, source=source, reference=reference,
-            lines=materialized,
+            lines=materialized, trade_id=trade_id,
         )
         existing = await self.session.scalar(select(FinancialTransaction).where(
             FinancialTransaction.workspace_id == workspace_id,
@@ -147,6 +154,7 @@ class LedgerService:
                     reference=reference, transaction_type=transaction_type,
                     status=FinancialTransactionStatus.POSTED.value, idempotency_key=idempotency_key,
                     source=source,
+                    trade_id=trade_id,
                     provenance={**(provenance or {}), "_idempotency_fingerprint": fingerprint},
                     posted_at=datetime.now(UTC),
                 )
@@ -158,7 +166,10 @@ class LedgerService:
                         asset=line.asset.upper(), direction=line.direction.value,
                         bucket=line.bucket.value, amount=line.amount, memo=line.memo,
                     ))
-                record_audit(self.session, actor_id=actor_id or user_id, action=AuditAction.CREATE, entity=AuditEntity.ACCOUNT, entity_id=transaction.id, event_type="LEDGER_TRANSACTION_POSTED", event_metadata={"workspace_id": str(workspace_id), "transaction_type": transaction_type, "source": source})
+                audit_actor = actor_id or user_id
+                if audit_actor is None:
+                    raise LedgerError("Ledger transaction requires an audit actor")
+                record_audit(self.session, actor_id=audit_actor, action=AuditAction.CREATE, entity=AuditEntity.ACCOUNT, entity_id=transaction.id, event_type="LEDGER_TRANSACTION_POSTED", event_metadata={"workspace_id": str(workspace_id), "transaction_type": transaction_type, "source": source})
                 await self.session.flush()
         except IntegrityError:
             existing = await self.session.scalar(select(FinancialTransaction).where(
@@ -216,7 +227,7 @@ class LedgerService:
             ),
         )
 
-    async def reverse(self, *, transaction_id: UUID, actor_id: UUID, idempotency_key: str, reason: str) -> FinancialTransaction:
+    async def reverse(self, *, transaction_id: UUID, actor_id: UUID, idempotency_key: str, reason: str, trade_id: UUID | None = None) -> FinancialTransaction:
         transaction = await self.session.get(FinancialTransaction, transaction_id)
         if transaction is None or transaction.status != FinancialTransactionStatus.POSTED.value:
             raise LedgerReversalError("Only a posted transaction can be reversed")
@@ -228,6 +239,7 @@ class LedgerService:
             transaction_type="reversal", idempotency_key=idempotency_key, source="ledger",
             reference=str(transaction.id), provenance={"reverses": str(transaction.id), "reason": reason},
             lines=tuple(LedgerLine(entry.financial_account_id, entry.asset, LedgerDirection.CREDIT if entry.direction == LedgerDirection.DEBIT.value else LedgerDirection.DEBIT, LedgerBucket(entry.bucket), entry.amount, "reversal") for entry in entries),
+            trade_id=trade_id,
         )
         transaction.status = FinancialTransactionStatus.REVERSED.value
         await self.session.flush()

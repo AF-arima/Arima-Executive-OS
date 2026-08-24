@@ -15,6 +15,7 @@ dependencies = [
     "PyJWT>=2.10",
     "email-validator>=2.2",
     "python-multipart>=0.0.20",
+    "boto3>=1.35,<2",
     "httpx>=0.28,<0.29",
     "cryptography>=44.0,<46.0",
 ]

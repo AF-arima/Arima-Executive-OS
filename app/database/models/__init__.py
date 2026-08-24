@@ -130,6 +130,8 @@ from app.database.models.intelligence import (
 )
 from app.database.models.integration import OAuthCredential, OAuthState
 from app.database.models.quant import TradeExecution
+from app.database.models.trade import SettledTrade, SettledTradeSide, SettledTradeStatus
+from app.database.models.document import CustomerDocument, CustomerDocumentStatus
 from app.database.models.research import QLabDataset, QLabExperiment, QLabModel, QLabRun, ResearchRecord
 __all__ = [
     "Base",
@@ -252,6 +254,11 @@ __all__ = [
     "OAuthCredential",
     "OAuthState",
     "TradeExecution",
+    "SettledTrade",
+    "SettledTradeSide",
+    "SettledTradeStatus",
+    "CustomerDocument",
+    "CustomerDocumentStatus",
     "QLabDataset",
     "QLabExperiment",
     "QLabModel",

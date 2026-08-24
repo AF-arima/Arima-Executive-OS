@@ -21,6 +21,7 @@ from app.api.v1.routes import (
     portfolio,
     research,
     withdrawal_intake,
+    documents,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -45,3 +46,4 @@ api_router.include_router(portfolio.router)
 api_router.include_router(research.router)
 api_router.include_router(telegram.router)
 api_router.include_router(withdrawal_intake.router)
+api_router.include_router(documents.router)
