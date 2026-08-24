@@ -13,6 +13,14 @@ class BalanceResponse(BaseModel):
     pending_balance: Decimal
 
 
+class FinancialAccountStateResponse(BaseModel):
+    id: UUID
+    asset: str
+    account_kind: str
+    status: str
+    balance: BalanceResponse
+
+
 class PositionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     asset: str
@@ -40,3 +48,13 @@ class PortfolioResponse(BaseModel):
     balances: list[BalanceResponse]
     positions: list[PositionResponse]
     recent_ledger_activity: list[LedgerActivityResponse]
+
+
+class FinancialStateResponse(BaseModel):
+    user_id: UUID
+    workspace_id: UUID
+    portfolio_id: UUID | None
+    financial_accounts: list[FinancialAccountStateResponse]
+    positions: list[PositionResponse]
+    ledger_activity_count: int
+    settled_trade_count: int
