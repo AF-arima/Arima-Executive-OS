@@ -1,9 +1,11 @@
+from io import StringIO
 from pathlib import Path
 from uuid import uuid4
 
 from alembic import command
+from alembic.config import Config
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 
 from tests.database.test_migrations import migration_config
 
@@ -45,7 +47,28 @@ def test_accounting_upgrade_accepts_valid_customer_and_clearing_data(tmp_path: P
         _, user_id, workspace_id = _seed_identity(connection)
         connection.execute(text("INSERT INTO financial_accounts (id, created_at, updated_at, workspace_id, user_id, asset, account_kind, status) VALUES (:id, :created, :updated, :workspace, :user, 'USD', 'customer', 'active')"), {"id": uuid4().hex, "created": "2026-08-24 12:00:00+00:00", "updated": "2026-08-24 12:00:00+00:00", "workspace": workspace_id, "user": user_id})
         connection.execute(text("INSERT INTO financial_accounts (id, created_at, updated_at, workspace_id, user_id, asset, account_kind, status) VALUES (:id, :created, :updated, :workspace, NULL, 'USD', 'clearing', 'active')"), {"id": uuid4().hex, "created": "2026-08-24 12:00:00+00:00", "updated": "2026-08-24 12:00:00+00:00", "workspace": workspace_id})
+        inspector = inspect(connection)
+        ledger_foreign_keys = inspector.get_foreign_keys("ledger_entries")
+        assert any(
+            "financial_accounts" in foreign_key["referred_table"]
+            for foreign_key in ledger_foreign_keys
+        )
     engine.dispose()
+
+
+def test_postgresql_upgrade_does_not_recreate_financial_accounts() -> None:
+    output_buffer = StringIO()
+    config = Config("alembic.ini", output_buffer=output_buffer)
+    config.attributes["database_url"] = (
+        "postgresql+asyncpg://postgres:postgres@localhost/arima"
+    )
+
+    command.upgrade(config, "20260824_0025:20260824_0026", sql=True)
+
+    sql = output_buffer.getvalue()
+    assert "ALTER TABLE financial_accounts ALTER COLUMN user_id DROP NOT NULL" in sql
+    assert "DROP CONSTRAINT pk_financial_accounts" not in sql
+    assert "DROP CONSTRAINT fk_ledger_entries_financial_account_id_financial_accounts" not in sql
 
 
 def test_downgrade_rejects_settled_trade_history_without_mutation(tmp_path: Path) -> None:

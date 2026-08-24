@@ -21,11 +21,30 @@ _AUDIT_ENTITIES = (
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("financial_accounts", recreate="always") as batch:
-        batch.alter_column("user_id", existing_type=sa.Uuid(), nullable=True)
-        batch.add_column(sa.Column("account_kind", sa.String(16), nullable=False, server_default="customer"))
-        batch.create_check_constraint("ck_financial_account_kind", "account_kind IN ('customer', 'clearing')")
-        batch.create_check_constraint("ck_financial_account_owner", "(account_kind = 'customer' AND user_id IS NOT NULL) OR (account_kind = 'clearing' AND user_id IS NULL)")
+    if op.get_bind().dialect.name == "postgresql":
+        # PostgreSQL cannot recreate this table: ledger_entries has a foreign
+        # key that depends on financial_accounts' primary-key index.
+        op.alter_column("financial_accounts", "user_id", existing_type=sa.Uuid(), nullable=True)
+        op.add_column(
+            "financial_accounts",
+            sa.Column("account_kind", sa.String(16), nullable=False, server_default="customer"),
+        )
+        op.create_check_constraint(
+            "ck_financial_account_kind",
+            "financial_accounts",
+            "account_kind IN ('customer', 'clearing')",
+        )
+        op.create_check_constraint(
+            "ck_financial_account_owner",
+            "financial_accounts",
+            "(account_kind = 'customer' AND user_id IS NOT NULL) OR (account_kind = 'clearing' AND user_id IS NULL)",
+        )
+    else:
+        with op.batch_alter_table("financial_accounts", recreate="always") as batch:
+            batch.alter_column("user_id", existing_type=sa.Uuid(), nullable=True)
+            batch.add_column(sa.Column("account_kind", sa.String(16), nullable=False, server_default="customer"))
+            batch.create_check_constraint("ck_financial_account_kind", "account_kind IN ('customer', 'clearing')")
+            batch.create_check_constraint("ck_financial_account_owner", "(account_kind = 'customer' AND user_id IS NOT NULL) OR (account_kind = 'clearing' AND user_id IS NULL)")
     op.create_index("uq_financial_account_workspace_clearing_asset", "financial_accounts", ["workspace_id", "asset"], unique=True, sqlite_where=sa.text("account_kind = 'clearing'"), postgresql_where=sa.text("account_kind = 'clearing'"))
 
     op.create_table(
@@ -100,8 +119,14 @@ def downgrade() -> None:
         op.drop_index(index, table_name="settled_trades")
     op.drop_table("settled_trades")
     op.drop_index("uq_financial_account_workspace_clearing_asset", table_name="financial_accounts")
-    with op.batch_alter_table("financial_accounts", recreate="always") as batch:
-        batch.drop_constraint("ck_financial_account_owner", type_="check")
-        batch.drop_constraint("ck_financial_account_kind", type_="check")
-        batch.drop_column("account_kind")
-        batch.alter_column("user_id", existing_type=sa.Uuid(), nullable=False)
+    if op.get_bind().dialect.name == "postgresql":
+        op.drop_constraint("ck_financial_account_owner", "financial_accounts", type_="check")
+        op.drop_constraint("ck_financial_account_kind", "financial_accounts", type_="check")
+        op.drop_column("financial_accounts", "account_kind")
+        op.alter_column("financial_accounts", "user_id", existing_type=sa.Uuid(), nullable=False)
+    else:
+        with op.batch_alter_table("financial_accounts", recreate="always") as batch:
+            batch.drop_constraint("ck_financial_account_owner", type_="check")
+            batch.drop_constraint("ck_financial_account_kind", type_="check")
+            batch.drop_column("account_kind")
+            batch.alter_column("user_id", existing_type=sa.Uuid(), nullable=False)
