@@ -49,6 +49,13 @@ class TradeRead(BaseModel):
     created_at: datetime
 
 
+class TradeProvenanceRead(TradeRead):
+    """Founder-only read model with persisted accounting links."""
+
+    settled_trade_id: UUID
+    financial_transaction_ids: list[UUID]
+
+
 class TradeReverse(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
     idempotency_key: str = Field(min_length=16, max_length=180)

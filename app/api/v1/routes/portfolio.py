@@ -30,7 +30,7 @@ from app.schemas.portfolio import (
     PositionResponse,
 )
 from app.schemas.deposits import DepositCreate, DepositRead
-from app.schemas.trades import TradeCreate, TradeRead, TradeReverse
+from app.schemas.trades import TradeCreate, TradeProvenanceRead, TradeRead, TradeReverse
 from app.services.portfolio import PortfolioService
 from app.services.identity import FinancialContextError, FinancialContextResolver
 from app.services.ledger import LedgerService
@@ -194,6 +194,48 @@ async def list_customer_trades(user_id: UUID, actor: FounderUser, session: Sessi
         _, workspace = await service._target(actor=actor, target_user_id=user_id)
         rows = list((await session.scalars(select(SettledTrade).where(SettledTrade.workspace_id == workspace.id, SettledTrade.target_user_id == user_id).order_by(SettledTrade.created_at.desc()))).all())
         return [TradeRead.model_validate(row) for row in rows]
+    except TradeAuthorizationError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get(
+    "/operations/customers/{user_id}/trades/provenance",
+    response_model=list[TradeProvenanceRead],
+)
+async def list_customer_trade_provenance(
+    user_id: UUID,
+    actor: FounderUser,
+    session: SessionDependency,
+) -> list[TradeProvenanceRead]:
+    """Return persisted trade metadata and its existing ledger transaction links."""
+    try:
+        service = TradeAccountingService(session)
+        _, workspace = await service._target(actor=actor, target_user_id=user_id)
+        trades = list((await session.scalars(
+            select(SettledTrade)
+            .where(SettledTrade.workspace_id == workspace.id, SettledTrade.target_user_id == user_id)
+            .order_by(SettledTrade.created_at.desc())
+        )).all())
+        if not trades:
+            return []
+        trade_ids = [trade.id for trade in trades]
+        transaction_rows = list((await session.execute(
+            select(FinancialTransaction.trade_id, FinancialTransaction.id)
+            .where(FinancialTransaction.trade_id.in_(trade_ids))
+            .order_by(FinancialTransaction.created_at)
+        )).all())
+        transaction_ids_by_trade: dict[UUID, list[UUID]] = {trade_id: [] for trade_id in trade_ids}
+        for trade_id, transaction_id in transaction_rows:
+            if trade_id is not None:
+                transaction_ids_by_trade[trade_id].append(transaction_id)
+        return [
+            TradeProvenanceRead(
+                **TradeRead.model_validate(trade).model_dump(),
+                settled_trade_id=trade.id,
+                financial_transaction_ids=transaction_ids_by_trade[trade.id],
+            )
+            for trade in trades
+        ]
     except TradeAuthorizationError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
