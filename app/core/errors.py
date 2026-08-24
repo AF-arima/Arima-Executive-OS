@@ -15,6 +15,7 @@ from app.auth.exceptions import (
     InvalidSecurityTokenError,
     InvalidTokenError,
     MFAAlreadyEnabledError,
+    MFALoginRequiredError,
     MFARequiredError,
     MFALockedError,
     InvalidMFACodeError,
@@ -46,6 +47,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(InactiveUserError, _inactive_user_handler)
     app.add_exception_handler(InvalidTokenError, _invalid_token_handler)
     app.add_exception_handler(MFARequiredError, _mfa_required_handler)
+    app.add_exception_handler(MFALoginRequiredError, _mfa_login_required_handler)
     app.add_exception_handler(MFAAlreadyEnabledError, _mfa_already_enabled_handler)
     app.add_exception_handler(MFALockedError, _mfa_locked_handler)
     app.add_exception_handler(InvalidMFACodeError, _invalid_mfa_handler)
@@ -126,7 +128,19 @@ async def _invalid_token_handler(
 
 
 async def _mfa_required_handler(request: Request, error: Exception) -> JSONResponse:
-    return _error_response(status.HTTP_403_FORBIDDEN, "Privileged MFA enrollment is required")
+    return _error_response(
+        status.HTTP_403_FORBIDDEN,
+        "Privileged MFA enrollment is required",
+        code="privileged_mfa_enrollment_required",
+    )
+
+
+async def _mfa_login_required_handler(request: Request, error: Exception) -> JSONResponse:
+    return _error_response(
+        status.HTTP_403_FORBIDDEN,
+        "MFA verification required",
+        code="mfa_login_required",
+    )
 
 
 async def _mfa_already_enabled_handler(request: Request, error: Exception) -> JSONResponse:
@@ -140,7 +154,12 @@ async def _mfa_locked_handler(request: Request, error: Exception) -> JSONRespons
 
 
 async def _invalid_mfa_handler(request: Request, error: Exception) -> JSONResponse:
-    return _error_response(status.HTTP_401_UNAUTHORIZED, "Invalid MFA code", BEARER_HEADERS)
+    return _error_response(
+        status.HTTP_401_UNAUTHORIZED,
+        "Invalid MFA code",
+        BEARER_HEADERS,
+        code="mfa_invalid",
+    )
 
 
 async def _invalid_security_token_handler(
@@ -305,9 +324,14 @@ def _error_response(
     status_code: int,
     detail: str,
     headers: dict[str, str] | None = None,
+    *,
+    code: str | None = None,
 ) -> JSONResponse:
+    content: dict[str, str] = {"detail": detail}
+    if code is not None:
+        content["code"] = code
     return JSONResponse(
         status_code=status_code,
-        content={"detail": detail},
+        content=content,
         headers=headers,
     )

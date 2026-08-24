@@ -114,6 +114,32 @@ def test_founder_control_requires_server_side_founder_authorization(
     assert "development-only-security-token-secret-change-me" not in str(body)
 
 
+def test_unenrolled_founder_response_remains_distinct_from_login_mfa(
+    management_context: AuthTestContext,
+    founder_allowlist: None,
+) -> None:
+    settings = get_settings()
+    original_environment = settings.environment
+    settings.environment = "production"
+    register_user(management_context, "founder@example.com")
+    grant_role(management_context, "founder@example.com", "administrator")
+    token = login_user(management_context, "founder@example.com")["access_token"]
+
+    try:
+        response = management_context.client.get(
+            "/api/v1/admin/founder/system-health",
+            headers=bearer(token),
+        )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Privileged MFA enrollment is required",
+            "code": "privileged_mfa_enrollment_required",
+        }
+    finally:
+        settings.environment = original_environment
+
+
 def test_founder_customer_inspection_and_circuit_controls_remain_server_authorized(
     management_context: AuthTestContext,
     founder_allowlist: None,

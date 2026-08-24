@@ -6,6 +6,8 @@ from fastapi import Response
 from sqlalchemy import select
 
 from app.api.v1.routes import auth as auth_routes
+from app.auth.service import AuthenticationService
+from app.auth.totp import code_for, current_step
 from app.core.config import Settings
 from app.database.models import RefreshTokenSession, User, Workspace
 from tests.auth.conftest import AuthTestContext
@@ -41,6 +43,44 @@ def test_me_requires_active_access_session(
     assert [role["name"] for role in response.json()["roles"]] == ["manager"]
     assert response.json()["workspace"]["owner_id"] == str(registered["id"])
     assert "hashed_password" not in response.json()
+
+
+def test_mfa_login_requires_and_accepts_otp_without_confusing_enrollment(
+    auth_context: AuthTestContext,
+) -> None:
+    register_user(auth_context)
+
+    async def enable_mfa() -> str:
+        async with auth_context.session_factory() as session:
+            user = await session.scalar(select(User).where(User.email == "user@example.com"))
+            assert user is not None
+            secret, _ = await AuthenticationService(session).begin_mfa_enrollment(user)
+            user.mfa_enabled = True
+            await session.commit()
+            return secret
+
+    secret = asyncio.run(enable_mfa())
+    missing = auth_context.client.post(
+        "/api/v1/auth/login",
+        json={"email": "user@example.com", "password": VALID_PASSWORD},
+        headers=csrf_headers(auth_context),
+    )
+    invalid = auth_context.client.post(
+        "/api/v1/auth/login",
+        json={"email": "user@example.com", "password": VALID_PASSWORD, "otp": "000000"},
+        headers=csrf_headers(auth_context),
+    )
+    valid = auth_context.client.post(
+        "/api/v1/auth/login",
+        json={"email": "user@example.com", "password": VALID_PASSWORD, "otp": code_for(secret, current_step())},
+        headers=csrf_headers(auth_context),
+    )
+
+    assert missing.status_code == 403
+    assert missing.json() == {"detail": "MFA verification required", "code": "mfa_login_required"}
+    assert invalid.status_code == 401
+    assert invalid.json()["detail"] == "Invalid MFA code"
+    assert valid.status_code == 200
 
 
 def test_refresh_rotates_cookie_and_detects_reuse(

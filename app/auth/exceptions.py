@@ -54,6 +54,10 @@ class MFARequiredError(AuthenticationError):
     pass
 
 
+class MFALoginRequiredError(AuthenticationError):
+    pass
+
+
 class MFAAlreadyEnabledError(AuthenticationError):
     pass
 

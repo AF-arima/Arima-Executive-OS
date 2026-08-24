@@ -20,7 +20,7 @@ from app.auth.exceptions import (
     MFAAlreadyEnabledError,
     InvalidMFACodeError,
     MFALockedError,
-    MFARequiredError,
+    MFALoginRequiredError,
     RoleNotFoundError,
     TokenReuseError,
     UserNotFoundError,
@@ -344,11 +344,11 @@ class AuthenticationService:
         if user.mfa_locked_until is not None and user.mfa_locked_until > now:
             raise MFALockedError(max(1, int((user.mfa_locked_until - now).total_seconds())))
         if otp is None:
-            raise MFARequiredError
+            raise MFALoginRequiredError
         try:
             secret = decrypt_secret(user.mfa_secret_encrypted or "")
         except Exception as error:
-            raise MFARequiredError from error
+            raise MFALoginRequiredError from error
         step = verify_code(secret, str(getattr(otp, "get_secret_value", lambda: otp)()), last_step=user.mfa_last_accepted_step)
         if step is None:
             user.mfa_failed_attempts += 1
