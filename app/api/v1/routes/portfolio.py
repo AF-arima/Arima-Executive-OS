@@ -29,11 +29,13 @@ from app.schemas.portfolio import (
     PortfolioResponse,
     PositionResponse,
 )
+from app.schemas.deposits import DepositCreate, DepositRead
 from app.schemas.trades import TradeCreate, TradeRead, TradeReverse
 from app.services.portfolio import PortfolioService
 from app.services.identity import FinancialContextError, FinancialContextResolver
 from app.services.ledger import LedgerService
 from app.services.trade_accounting import TradeAccountingError, TradeAuthorizationError, TradeConflictError, TradeAccountingService
+from app.services.deposit_accounting import DepositAccountingError, DepositAuthorizationError, DepositConflictError, DepositAccountingService
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
@@ -203,4 +205,33 @@ async def reverse_customer_trade(user_id: UUID, trade_id: UUID, data: TradeRever
     except TradeAuthorizationError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (TradeConflictError, TradeAccountingError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/operations/customers/{user_id}/deposits", response_model=DepositRead, status_code=201)
+async def record_customer_deposit(
+    user_id: UUID,
+    data: DepositCreate,
+    actor: FounderUser,
+    session: SessionDependency,
+    _csrf: Annotated[None, Depends(_trade_csrf)],
+) -> DepositRead:
+    try:
+        result = await DepositAccountingService(session).record(actor=actor, target_user_id=user_id, data=data)
+        return DepositRead(
+            id=result.id,
+            workspace_id=result.workspace_id,
+            target_user_id=result.target_user_id,
+            founder_actor_id=result.founder_actor_id,
+            asset=result.asset,
+            amount=result.amount,
+            reference=result.reference,
+            reason=result.reason,
+            idempotency_key=result.idempotency_key,
+            financial_transaction_id=result.financial_transaction_id,
+            financial_account_id=result.financial_account_id,
+        )
+    except DepositAuthorizationError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (DepositConflictError, DepositAccountingError, ValueError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error

@@ -108,6 +108,36 @@ class LedgerService:
                     raise LedgerError("Financial account could not be created safely") from None
         return account
 
+    async def account_in_transaction(
+        self, *, workspace_id: UUID, user_id: UUID | None, asset: str,
+        lock: bool = False, account_kind: str = "customer",
+    ) -> FinancialAccount:
+        """Resolve/create an account inside the caller's outer transaction."""
+        normalized = asset.upper()
+        statement = select(FinancialAccount).where(
+            FinancialAccount.workspace_id == workspace_id,
+            FinancialAccount.asset == normalized,
+            FinancialAccount.account_kind == account_kind,
+        )
+        if account_kind == "customer":
+            statement = statement.where(FinancialAccount.user_id == user_id)
+        else:
+            statement = statement.where(FinancialAccount.user_id.is_(None))
+        if lock:
+            statement = statement.with_for_update()
+        account = await self.session.scalar(statement)
+        if account is not None:
+            return account
+        account = FinancialAccount(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            asset=normalized,
+            account_kind=account_kind,
+        )
+        self.session.add(account)
+        await self.session.flush()
+        return account
+
     async def post(
         self,
         *, workspace_id: UUID,
