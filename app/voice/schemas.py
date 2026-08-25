@@ -4,11 +4,12 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.experience.schemas import ExperienceEvent
 from app.voice.events import VoiceEventType
 from app.voice.state import VoiceState
+from app.voice.speech import normalize_voice_language
 
 
 class VoiceSchema(BaseModel):
@@ -23,6 +24,11 @@ class VoiceSessionCreate(VoiceSchema):
     language: str = Field(default="en", min_length=2, max_length=20)
     locale: str = Field(default="en-GB", min_length=2, max_length=35)
     timezone: str = Field(default="Europe/London", min_length=1, max_length=100)
+
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, value: str) -> str:
+        return normalize_voice_language(value)
 
 
 class VoiceSession(VoiceSchema):
@@ -46,6 +52,18 @@ class VoiceTranscriptInput(VoiceSchema):
     language: str | None = Field(default=None, min_length=2, max_length=20)
     locale: str | None = Field(default=None, min_length=2, max_length=35)
     timezone: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator("language")
+    @classmethod
+    def validate_optional_language(cls, value: str | None) -> str | None:
+        return None if value is None else normalize_voice_language(value)
+
+
+class TextToSpeechInput(VoiceSchema):
+    text: str = Field(min_length=1, max_length=10_000)
+    locale: str | None = Field(default=None, min_length=2, max_length=35)
+    request_id: UUID = Field(default_factory=uuid4)
+    generation_id: int | None = Field(default=None, ge=0)
 
 
 class VoiceCommand(VoiceSchema):
@@ -115,3 +133,6 @@ class VoiceHealth(VoiceSchema):
     orchestration_available: bool
     checked_at: datetime
     provider_provenance: VoiceProviderProvenance
+    stt_status: str = "not_configured"
+    tts_status: str = "not_configured"
+    browser_fallback: str = "fallback_only"

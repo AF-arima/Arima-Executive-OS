@@ -5,6 +5,7 @@ from app.core.config import Settings
 from app.providers.types import ProviderName
 from app.voice.schemas import VoiceHealth
 from app.voice.schemas import VoiceProviderProvenance
+from app.voice.speech import SpeechCapabilityService
 
 
 def configured_provider_provenance(
@@ -61,4 +62,7 @@ def voice_health(
         orchestration_available=orchestration_available,
         checked_at=datetime.now(timezone.utc),
         provider_provenance=provider_provenance,
+        stt_status=SpeechCapabilityService().capabilities().stt,
+        tts_status=SpeechCapabilityService().capabilities().tts,
+        browser_fallback=SpeechCapabilityService().capabilities().browser_fallback,
     )
