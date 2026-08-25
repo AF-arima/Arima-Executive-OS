@@ -2,7 +2,7 @@ from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.api.v1.dependencies import AUTHENTICATED_RESPONSES, SessionDependency
 from app.auth.dependencies import get_current_active_user
@@ -24,6 +24,15 @@ from app.voice.schemas import (
     VoiceSession,
     VoiceSessionCreate,
     VoiceTranscriptInput,
+    TextToSpeechInput,
+)
+from app.voice.tts import (
+    TTSNotConfigured,
+    TTSOrchestrator,
+    TTSProviderError,
+    TTSRequest,
+    TTSTimeout,
+    TTSUnsupportedLocale,
 )
 
 router = APIRouter(
@@ -125,6 +134,55 @@ async def submit_voice_transcript(
         raise HTTPException(status_code=504, detail=str(error)) from error
     except VoiceProviderUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@router.post("/sessions/{session_id}/tts", response_class=Response)
+async def synthesize_voice_response(
+    session_id: UUID,
+    data: TextToSpeechInput,
+    database: SessionDependency,
+    actor: VoiceUser,
+) -> Response:
+    settings = get_settings()
+    try:
+        await SecurityRateLimiter(database).enforce(
+            scope="voice_tts",
+            key=str(actor.id),
+            limit=settings.voice_tts_rate_limit_per_minute,
+            window=timedelta(minutes=1),
+        )
+        session = await VoiceGatewayFactory(database).sessions.get(session_id, actor.id)
+        locale = data.locale or session.locale
+        result = await TTSOrchestrator(settings).synthesize(
+            TTSRequest(
+                text=data.text,
+                locale=locale,
+                request_id=data.request_id,
+                generation_id=data.generation_id,
+            )
+        )
+    except VoiceSessionNotFound as error:
+        raise HTTPException(status_code=404, detail="Voice session not found") from error
+    except VoiceSessionAccessDenied as error:
+        raise HTTPException(status_code=403, detail="Voice session access denied") from error
+    except TTSUnsupportedLocale as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except TTSNotConfigured as error:
+        raise HTTPException(status_code=503, detail="Text-to-speech is not configured") from error
+    except TTSTimeout as error:
+        raise HTTPException(status_code=504, detail="Text-to-speech timed out") from error
+    except TTSProviderError as error:
+        raise HTTPException(status_code=503, detail="Text-to-speech is unavailable") from error
+    return Response(
+        content=result.audio,
+        media_type=result.mime_type,
+        headers={
+            "Cache-Control": "no-store",
+            "X-TTS-Provider": result.provider,
+            "X-TTS-Locale": result.locale,
+            "X-TTS-Request-ID": str(result.request_id),
+        },
+    )
 
 
 @router.post(

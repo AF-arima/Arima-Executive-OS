@@ -225,9 +225,17 @@ class Settings(BaseSettings):
     arima_voice_max_provider_retries: int = Field(
         default=1, ge=0, le=2
     )
+    azure_speech_enabled: bool = False
+    azure_speech_region: str = Field(default="uksouth", min_length=1, max_length=40)
+    azure_speech_key: SecretStr | None = None
+    azure_speech_output_format: str = Field(
+        default="audio-24khz-48kbitrate-mono-mp3", min_length=1, max_length=100
+    )
+    azure_speech_timeout_seconds: float = Field(default=10.0, ge=1.0, le=30.0)
     voice_transcript_rate_limit_per_minute: int = Field(
         default=10, ge=1, le=1_000
     )
+    voice_tts_rate_limit_per_minute: int = Field(default=10, ge=1, le=1_000)
     telegram_enabled: bool = False
     telegram_bot_token: SecretStr | None = Field(default=None, min_length=1)
     telegram_webhook_secret: SecretStr | None = Field(
