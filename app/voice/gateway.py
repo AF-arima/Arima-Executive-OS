@@ -389,6 +389,13 @@ class VoiceGateway:
                 exception_type=type(error).__name__,
                 duration_ms=round(self.execution_timeout_seconds * 1000, 2),
             )
+            observer.emit(
+                "orchestration_timeout",
+                outcome="timeout",
+                failure_class="orchestration_timeout",
+                timeout_category="orchestration_timeout",
+                duration_ms=round(self.execution_timeout_seconds * 1000, 2),
+            )
             raise VoiceExecutionTimeout(
                 "Voice provider timed out before completing execution"
             ) from error

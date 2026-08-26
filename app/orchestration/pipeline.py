@@ -211,17 +211,28 @@ class OrchestrationPipeline(HealthContract):
                     "response_language": detect_response_language(
                         context.request.content
                     ),
+                    "_voice_observer": observer,
                 }
-            response, provider_retries = await self.fallback.retry(
-                lambda: provider.complete(
+            provider_attempt = 0
+
+            async def complete_provider():
+                nonlocal provider_attempt
+                provider_attempt += 1
+                return await provider.complete(
                     CompletionRequest(
                         model=model,
                         messages=provider_messages,
                         max_output_tokens=context.request.max_output_tokens,
                         json_mode=context.request.require_json,
-                        metadata=provider_metadata,
+                        metadata={
+                            **provider_metadata,
+                            "provider_attempt": provider_attempt,
+                        },
                     )
-                ),
+                )
+
+            response, provider_retries = await self.fallback.retry(
+                complete_provider,
                 deadline=context.execution_deadline,
                 observer=observer.emit if observer is not None else None,
                 provider_name=provider.provider.value,

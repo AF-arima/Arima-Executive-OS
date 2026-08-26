@@ -34,6 +34,14 @@ _ALLOWED_EVENTS = frozenset(
         "provider_call_started",
         "provider_call_finished",
         "provider_call_failed",
+        "provider_attempt_start",
+        "provider_request_dispatched",
+        "provider_response_received",
+        "provider_attempt_success",
+        "provider_attempt_failure",
+        "provider_fallback",
+        "provider_fallback_exhausted",
+        "orchestration_timeout",
         "orchestration_deadline_exceeded",
         "fallback_exhausted",
     }
@@ -115,6 +123,8 @@ class VoiceExecutionObserver:
         failure_class: str | None = None,
         exception_type: str | None = None,
         status_code: int | None = None,
+        status_category: str | None = None,
+        timeout_category: str | None = None,
         attempt_count: int | None = None,
         providers_attempted: tuple[str, ...] | None = None,
         failure_categories: tuple[str, ...] | None = None,
@@ -143,6 +153,8 @@ class VoiceExecutionObserver:
             "failure_class": failure_class,
             "exception_type": exception_type,
             "status_code": status_code,
+            "status_category": status_category,
+            "timeout_category": timeout_category,
             "attempt_count": attempt_count,
             "providers_attempted": providers_attempted,
             "failure_categories": failure_categories,
@@ -161,3 +173,16 @@ class VoiceExecutionObserver:
 def observer_from_context(context: Any) -> VoiceExecutionObserver | None:
     observer = context.request.metadata.get("_voice_observer")
     return observer if isinstance(observer, VoiceExecutionObserver) else None
+
+
+def observer_from_metadata(metadata: Any) -> VoiceExecutionObserver | None:
+    if not isinstance(metadata, dict):
+        return None
+    observer = metadata.get("_voice_observer")
+    return observer if isinstance(observer, VoiceExecutionObserver) else None
+
+
+def http_status_category(status_code: int | None) -> str | None:
+    if not isinstance(status_code, int) or status_code < 100:
+        return None
+    return f"{status_code // 100}xx"

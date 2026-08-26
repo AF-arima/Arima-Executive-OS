@@ -31,7 +31,11 @@ from app.providers.types import (
     ProviderToolCall,
     ProviderToolResult,
 )
-from app.voice.observability import normalized_failure_class
+from app.voice.observability import (
+    http_status_category,
+    normalized_failure_class,
+    observer_from_metadata,
+)
 
 logger = logging.getLogger("arima.provider.execution")
 
@@ -121,7 +125,21 @@ class NvidiaProvider(ProviderAdapter):
             if isinstance(chat_template_kwargs, Mapping):
                 payload["chat_template_kwargs"] = dict(chat_template_kwargs)
         diagnostics = self._diagnostic_fields(request)
+        observer = observer_from_metadata(request.metadata)
+        raw_attempt = request.metadata.get("provider_attempt")
+        attempt = raw_attempt if isinstance(raw_attempt, int) else None
         started = perf_counter()
+        if observer is not None:
+            observer.emit(
+                "provider_attempt_start",
+                attempt=attempt,
+                provider=self.provider.value,
+                outcome="started",
+                provider_timeout_ms=self._timeout_seconds * 1000,
+                request_mode=diagnostics.get("request_mode"),
+                response_language=diagnostics.get("response_language"),
+                model=request.model,
+            )
         logger.info(
             "provider_call_started",
             extra={
@@ -132,14 +150,80 @@ class NvidiaProvider(ProviderAdapter):
             },
         )
         try:
+            if observer is not None:
+                observer.emit(
+                    "provider_request_dispatched",
+                    attempt=attempt,
+                    provider=self.provider.value,
+                    outcome="dispatched",
+                    request_mode=diagnostics.get("request_mode"),
+                    response_language=diagnostics.get("response_language"),
+                    model=request.model,
+                )
             if self._client is not None:
-                response = await self._post(self._client, headers, payload)
+                response = await self._post(
+                    self._client,
+                    headers,
+                    payload,
+                    on_response=(
+                        lambda raw: observer.emit(
+                            "provider_response_received",
+                            attempt=attempt,
+                            provider=self.provider.value,
+                            outcome="received",
+                            status_code=raw.status_code,
+                            status_category=http_status_category(raw.status_code),
+                            duration_ms=round((perf_counter() - started) * 1000, 2),
+                            request_mode=diagnostics.get("request_mode"),
+                            response_language=diagnostics.get("response_language"),
+                            model=request.model,
+                        )
+                    ) if observer is not None else None,
+                )
             else:
                 async with httpx.AsyncClient(
                     timeout=self._timeout_seconds
                 ) as client:
-                    response = await self._post(client, headers, payload)
+                    response = await self._post(
+                        client,
+                        headers,
+                        payload,
+                        on_response=(
+                            lambda raw: observer.emit(
+                                "provider_response_received",
+                                attempt=attempt,
+                                provider=self.provider.value,
+                                outcome="received",
+                                status_code=raw.status_code,
+                                status_category=http_status_category(raw.status_code),
+                                duration_ms=round((perf_counter() - started) * 1000, 2),
+                                request_mode=diagnostics.get("request_mode"),
+                                response_language=diagnostics.get("response_language"),
+                                model=request.model,
+                            )
+                        ) if observer is not None else None,
+                    )
+            body = self._response_body(response)
+            content, finish_reason, tool_calls = self._completion(body)
+            usage = self._usage(body)
         except Exception as error:
+            if observer is not None:
+                failure_class = normalized_failure_class(error)
+                observer.emit(
+                    "provider_attempt_failure",
+                    attempt=attempt,
+                    provider=self.provider.value,
+                    outcome="failed",
+                    duration_ms=round((perf_counter() - started) * 1000, 2),
+                    failure_class=failure_class,
+                    timeout_category=(failure_class if "timeout" in failure_class else None),
+                    exception_type=type(error).__name__,
+                    status_code=getattr(error, "status_code", None),
+                    status_category=http_status_category(getattr(error, "status_code", None)),
+                    request_mode=diagnostics.get("request_mode"),
+                    response_language=diagnostics.get("response_language"),
+                    model=request.model,
+                )
             logger.warning(
                 "provider_call_failed",
                 extra={
@@ -153,6 +237,17 @@ class NvidiaProvider(ProviderAdapter):
                 },
             )
             raise
+        if observer is not None:
+            observer.emit(
+                "provider_attempt_success",
+                attempt=attempt,
+                provider=self.provider.value,
+                outcome="success",
+                duration_ms=round((perf_counter() - started) * 1000, 2),
+                request_mode=diagnostics.get("request_mode"),
+                response_language=diagnostics.get("response_language"),
+                model=request.model,
+            )
         logger.info(
             "provider_call_finished",
             extra={
@@ -164,9 +259,6 @@ class NvidiaProvider(ProviderAdapter):
             },
         )
         latency_ms = max(int((perf_counter() - started) * 1_000), 0)
-        body = self._response_body(response)
-        content, finish_reason, tool_calls = self._completion(body)
-        usage = self._usage(body)
         response_id = body.get("id")
         response_model = body.get("model")
         return CompletionResponse(
@@ -280,6 +372,7 @@ class NvidiaProvider(ProviderAdapter):
         client: httpx.AsyncClient,
         headers: Mapping[str, str],
         payload: Mapping[str, object],
+        on_response: Any = None,
     ) -> httpx.Response:
         try:
             response = await client.post(
@@ -291,6 +384,8 @@ class NvidiaProvider(ProviderAdapter):
             raise ProviderTimeout("NVIDIA request timed out") from error
         except httpx.HTTPError as error:
             raise ProviderUnavailable("NVIDIA request failed") from error
+        if on_response is not None:
+            on_response(response)
         if response.status_code in {401, 403}:
             raise self._with_status(
                 AuthenticationFailure("NVIDIA provider authentication failed"),

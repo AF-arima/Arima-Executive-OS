@@ -84,6 +84,15 @@ class OrchestrationFallback(HealthContract):
                         exception_type="TimeoutError",
                         deadline_remaining_ms=0,
                     )
+                    observer(
+                        "orchestration_timeout",
+                        attempt=attempt,
+                        provider=provider_name,
+                        outcome="timeout",
+                        duration_ms=round((perf_counter() - attempt_started) * 1000, 2),
+                        failure_class=category,
+                        timeout_category=category,
+                    )
                 raise
             except Exception as error:
                 last_error = error
@@ -107,7 +116,25 @@ class OrchestrationFallback(HealthContract):
                             provider=provider_name,
                             outcome="started",
                         )
+                        observer(
+                            "provider_fallback",
+                            attempt=attempt + 1,
+                            provider=provider_name,
+                            outcome="started",
+                            failure_class=category,
+                        )
         if observer is not None:
+            observer(
+                "provider_fallback_exhausted",
+                provider=provider_name,
+                outcome="failed",
+                duration_ms=round((perf_counter() - started_total) * 1000, 2),
+                failure_class="provider_unavailable",
+                exception_type=(type(last_error).__name__ if last_error else None),
+                attempt_count=len(attempts),
+                providers_attempted=tuple(attempts),
+                failure_categories=tuple(failure_categories),
+            )
             observer(
                 "fallback_exhausted",
                 provider=provider_name,
