@@ -21,6 +21,14 @@ _MARKET_MARKERS = (
     "btc", "bitcoin", "crypto", "cryptocurrency", "stock price", "market price",
     "قیمت بیت", "بازار", "биткоин", "крипто", "цена акции", "piyasa",
 )
+_RESPONSE_LANGUAGE_NAMES = {
+    "en": "English",
+    "fa": "Persian",
+    "ar": "Arabic",
+    "ru": "Russian",
+    "tr": "Turkish",
+    "zh": "Chinese",
+}
 
 
 class ProviderPromptBuilder:
@@ -48,6 +56,16 @@ class ProviderPromptBuilder:
         "preserve authorization and provenance rules. For request_mode=market, "
         "preserve verified market-data requirements."
     )
+
+    @classmethod
+    def system_instructions_for(cls, query: str) -> str:
+        language = detect_response_language(query)
+        language_name = _RESPONSE_LANGUAGE_NAMES[language]
+        return (
+            f"{cls.system_instructions} The required response language for this "
+            f"request is {language_name} ({language}); answer entirely in that "
+            "language unless the user explicitly requests another language."
+        )
 
     def build(
         self,

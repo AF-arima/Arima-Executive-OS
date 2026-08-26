@@ -54,3 +54,21 @@ def test_evidence_and_market_modes_remain_fail_closed() -> None:
             request_mode=mode,
         )
         assert result.accepted is False
+
+
+@pytest.mark.parametrize(
+    ("query", "language_name", "language"),
+    [
+        ("When was World War II?", "English", "en"),
+        ("اقتصاد چیست؟", "Persian", "fa"),
+        ("من أنت؟", "Arabic", "ar"),
+        ("Говорите по-русски?", "Russian", "ru"),
+        ("Sen kimsin?", "Turkish", "tr"),
+        ("你是谁？", "Chinese", "zh"),
+    ],
+)
+def test_provider_system_prompt_enforces_detected_response_language(
+    query: str, language_name: str, language: str
+) -> None:
+    instructions = ProviderPromptBuilder.system_instructions_for(query)
+    assert f"{language_name} ({language})" in instructions

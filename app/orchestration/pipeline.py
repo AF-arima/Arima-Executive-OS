@@ -169,7 +169,9 @@ class OrchestrationPipeline(HealthContract):
         provider_messages = (
             ProviderMessage(
                 role=MessageRole.SYSTEM,
-                content=self.provider_prompt.system_instructions,
+                content=self.provider_prompt.system_instructions_for(
+                    context.request.content
+                ),
             ),
             ProviderMessage(
                 role=MessageRole.USER,
