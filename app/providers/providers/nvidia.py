@@ -32,6 +32,7 @@ from app.providers.types import (
     ProviderToolResult,
 )
 from app.voice.observability import (
+    VoiceExecutionObserver,
     http_status_category,
     normalized_failure_class,
     observer_from_metadata,
@@ -208,9 +209,21 @@ class NvidiaProvider(ProviderAdapter):
                     )
             if isinstance(trace, list):
                 trace.append("F_PROVIDER_RETURN")
-            body = self._response_body(response)
-            content, finish_reason, tool_calls = self._completion(body)
-            usage = self._usage(body)
+            try:
+                body = self._response_body(response)
+            except Exception as error:
+                self._emit_post_200_failure(observer, diagnostics, attempt, "body_decode", error)
+                raise
+            try:
+                content, finish_reason, tool_calls = self._completion(body)
+            except Exception as error:
+                self._emit_post_200_failure(observer, diagnostics, attempt, "completion_parse", error)
+                raise
+            try:
+                usage = self._usage(body)
+            except Exception as error:
+                self._emit_post_200_failure(observer, diagnostics, attempt, "usage_parse", error)
+                raise
         except Exception as error:
             if observer is not None:
                 failure_class = normalized_failure_class(error)
@@ -243,48 +256,80 @@ class NvidiaProvider(ProviderAdapter):
             )
             raise
         if observer is not None:
+            try:
+                observer.emit(
+                    "provider_attempt_success",
+                    attempt=attempt,
+                    provider=self.provider.value,
+                    outcome="success",
+                    duration_ms=round((perf_counter() - started) * 1000, 2),
+                    request_mode=diagnostics.get("request_mode"),
+                    response_language=diagnostics.get("response_language"),
+                    model=request.model,
+                )
+            except Exception as error:
+                self._emit_post_200_failure(observer, diagnostics, attempt, "success_emit", error)
+                raise
+        try:
+            logger.info(
+                "provider_call_finished",
+                extra={
+                    **diagnostics,
+                    "provider": self.provider.value,
+                    "model": request.model,
+                    "duration_ms": round((perf_counter() - started) * 1000, 2),
+                    "status_code": response.status_code,
+                },
+            )
+            latency_ms = max(int((perf_counter() - started) * 1_000), 0)
+            response_id = body.get("id")
+            response_model = body.get("model")
+            return CompletionResponse(
+                provider=self.provider,
+                model=(
+                    response_model
+                    if isinstance(response_model, str) and response_model
+                    else request.model
+                ),
+                content=content,
+                usage=usage,
+                estimated_cost=self.estimate_cost(usage, model=request.model),
+                finish_reason=finish_reason,
+                tool_calls=tool_calls,
+                metadata={
+                    "response_id": (
+                        response_id if isinstance(response_id, str) else None
+                    ),
+                    "latency_ms": latency_ms,
+                },
+            )
+        except Exception as error:
+            self._emit_post_200_failure(observer, diagnostics, attempt, "complete", error)
+            raise
+
+    @staticmethod
+    def _emit_post_200_failure(
+        observer: VoiceExecutionObserver | None,
+        diagnostics: Mapping[str, object],
+        attempt: int | None,
+        stage: str,
+        error: Exception,
+    ) -> None:
+        if observer is None:
+            return
+        try:
             observer.emit(
-                "provider_attempt_success",
+                "provider_post_200_failure",
                 attempt=attempt,
-                provider=self.provider.value,
-                outcome="success",
-                duration_ms=round((perf_counter() - started) * 1000, 2),
+                provider=ProviderName.NVIDIA.value,
+                failure_class=normalized_failure_class(error),
+                exception_type=type(error).__name__,
                 request_mode=diagnostics.get("request_mode"),
                 response_language=diagnostics.get("response_language"),
-                model=request.model,
+                stage=stage,
             )
-        logger.info(
-            "provider_call_finished",
-            extra={
-                **diagnostics,
-                "provider": self.provider.value,
-                "model": request.model,
-                "duration_ms": round((perf_counter() - started) * 1000, 2),
-                "status_code": response.status_code,
-            },
-        )
-        latency_ms = max(int((perf_counter() - started) * 1_000), 0)
-        response_id = body.get("id")
-        response_model = body.get("model")
-        return CompletionResponse(
-            provider=self.provider,
-            model=(
-                response_model
-                if isinstance(response_model, str) and response_model
-                else request.model
-            ),
-            content=content,
-            usage=usage,
-            estimated_cost=self.estimate_cost(usage, model=request.model),
-            finish_reason=finish_reason,
-            tool_calls=tool_calls,
-            metadata={
-                "response_id": (
-                    response_id if isinstance(response_id, str) else None
-                ),
-                "latency_ms": latency_ms,
-            },
-        )
+        except Exception:
+            return
 
     async def stream(
         self,

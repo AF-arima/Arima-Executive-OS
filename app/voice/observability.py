@@ -18,7 +18,7 @@ _SAFE_LOG_FIELDS = frozenset(
     "correlation_id voice_session_id voice_trace_id event provider model "
     "outcome attempt elapsed_ms duration_ms provider_timeout_ms failure_class "
     "exception_type status_code status_category timeout_category attempt_count "
-    "providers_attempted failure_categories request_mode response_language".split()
+    "providers_attempted failure_categories request_mode response_language stage".split()
 )
 
 
@@ -88,6 +88,7 @@ _ALLOWED_EVENTS = frozenset(
         "provider_response_received",
         "provider_attempt_success",
         "provider_attempt_failure",
+        "provider_post_200_failure",
         "provider_fallback",
         "provider_fallback_exhausted",
         "orchestration_timeout",
@@ -181,6 +182,7 @@ class VoiceExecutionObserver:
         request_mode: str | None = None,
         response_language: str | None = None,
         model: str | None = None,
+        stage: str | None = None,
     ) -> None:
         if event not in _ALLOWED_EVENTS:
             raise ValueError(f"Unsupported voice execution event: {event}")
@@ -211,6 +213,7 @@ class VoiceExecutionObserver:
             "request_mode": request_mode,
             "response_language": response_language,
             "model": model,
+            "stage": stage,
         }
         payload.update({key: value for key, value in safe_fields.items() if value is not None})
         self.sink(event, payload)

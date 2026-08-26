@@ -225,3 +225,152 @@ def test_nvidia_boundary_failure_is_normalized_at_adapter() -> None:
     rendered = repr(events).lower()
     assert "private provider response" not in rendered
     assert "secret-token" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("body", "stage"),
+    [
+        ({"choices": []}, "completion_parse"),
+        ({"choices": [{"message": {}}]}, "completion_parse"),
+        (
+            {"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]},
+            "completion_parse",
+        ),
+        (
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            },
+            "usage_parse",
+        ),
+    ],
+)
+def test_post_200_failures_are_staged_without_private_details(
+    body: dict[str, object], stage: str
+) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    observer = VoiceExecutionObserver(
+        None,
+        "safe-session",
+        sink=lambda event, payload: events.append((event, payload)),
+    )
+    config = ProviderConfig(
+        provider=ProviderName.NVIDIA,
+        default_model="safe-model",
+        max_model_tokens=1_024,
+        default_temperature=0.2,
+        max_output_tokens=128,
+        api_key=SecretStr("secret-token"),
+        capabilities=ProviderCapabilities(),
+    )
+    request = CompletionRequest(
+        model="safe-model",
+        messages=(ProviderMessage(role=MessageRole.USER, content="private prompt"),),
+        metadata={"_voice_observer": observer, "provider_attempt": 1},
+    )
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            with pytest.raises(ProviderUnavailable):
+                await NvidiaProvider(config, client=client).complete(request)
+
+    asyncio.run(scenario())
+    failure = next(
+        payload
+        for event, payload in events
+        if event == "provider_post_200_failure"
+    )
+    assert failure["stage"] == stage
+    rendered = repr(events)
+    assert "private prompt" not in rendered
+    assert "secret-token" not in rendered
+    assert "provider response" not in rendered
+
+
+def test_post_200_body_decode_failure_is_staged() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not-json")
+
+    observer = VoiceExecutionObserver(
+        None,
+        "safe-session",
+        sink=lambda event, payload: events.append((event, payload)),
+    )
+    config = ProviderConfig(
+        provider=ProviderName.NVIDIA,
+        default_model="safe-model",
+        max_model_tokens=1_024,
+        default_temperature=0.2,
+        max_output_tokens=128,
+        api_key=SecretStr("secret-token"),
+        capabilities=ProviderCapabilities(),
+    )
+    request = CompletionRequest(
+        model="safe-model",
+        messages=(ProviderMessage(role=MessageRole.USER, content="private prompt"),),
+        metadata={"_voice_observer": observer, "provider_attempt": 1},
+    )
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            with pytest.raises(ProviderUnavailable):
+                await NvidiaProvider(config, client=client).complete(request)
+
+    asyncio.run(scenario())
+    failure = next(payload for event, payload in events if event == "provider_post_200_failure")
+    assert failure["stage"] == "body_decode"
+
+
+def test_post_200_success_emit_failure_is_staged_without_message() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "safe"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    def sink(event: str, payload: dict[str, object]) -> None:
+        events.append((event, payload))
+        if event == "provider_attempt_success":
+            raise RuntimeError("private success sink detail")
+
+    observer = VoiceExecutionObserver(None, "safe-session", sink=sink)
+    config = ProviderConfig(
+        provider=ProviderName.NVIDIA,
+        default_model="safe-model",
+        max_model_tokens=1_024,
+        default_temperature=0.2,
+        max_output_tokens=128,
+        api_key=SecretStr("secret-token"),
+        capabilities=ProviderCapabilities(),
+    )
+    request = CompletionRequest(
+        model="safe-model",
+        messages=(ProviderMessage(role=MessageRole.USER, content="private prompt"),),
+        metadata={"_voice_observer": observer, "provider_attempt": 1},
+    )
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            with pytest.raises(RuntimeError, match="private success sink detail"):
+                await NvidiaProvider(config, client=client).complete(request)
+
+    asyncio.run(scenario())
+    failure = next(payload for event, payload in events if event == "provider_post_200_failure")
+    assert failure["stage"] == "success_emit"
+    assert "private success sink detail" not in repr(failure)
