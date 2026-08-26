@@ -189,6 +189,12 @@ class Settings(BaseSettings):
         max_length=200,
     )
     nvidia_api_key: SecretStr | None = None
+    deepseek_api_key: SecretStr | None = None
+    deepseek_model: str = Field(
+        default="deepseek-v4-flash",
+        min_length=1,
+        max_length=200,
+    )
     ollama_url: str = "http://localhost:11434"
     default_provider: Literal[
         "mock",
@@ -196,6 +202,7 @@ class Settings(BaseSettings):
         "anthropic",
         "gemini",
         "nvidia",
+        "deepseek",
         "ollama",
     ] = "mock"
     default_model: str = Field(
@@ -447,6 +454,7 @@ class Settings(BaseSettings):
                 "anthropic": self.anthropic_api_key,
                 "gemini": self.gemini_api_key,
                 "nvidia": self.nvidia_api_key,
+                "deepseek": self.deepseek_api_key,
             }
             credential = provider_credentials.get(self.default_provider)
             if (

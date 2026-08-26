@@ -12,6 +12,7 @@ from app.providers.exceptions import (
 from app.providers.factory import ProviderFactory
 from app.providers.providers import (
     AnthropicProvider,
+    DeepSeekProvider,
     GeminiProvider,
     MockProvider,
     NvidiaProvider,
@@ -48,6 +49,7 @@ __all__ = [
     "EmbeddingResponse",
     "EstimatedCost",
     "GeminiProvider",
+    "DeepSeekProvider",
     "InvalidModel",
     "MessageRole",
     "MockProvider",

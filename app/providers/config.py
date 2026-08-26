@@ -100,6 +100,17 @@ class ProviderPlatformConfig:
                     reasoning=True,
                 ),
             ),
+            ProviderName.DEEPSEEK: build(
+                ProviderName.DEEPSEEK,
+                model=settings.deepseek_model,
+                api_key=settings.deepseek_api_key,
+                base_url="https://api.deepseek.com",
+                capabilities=ProviderCapabilities(
+                    streaming=True,
+                    tools=True,
+                    json_mode=True,
+                ),
+            ),
             ProviderName.OLLAMA: build(
                 ProviderName.OLLAMA,
                 base_url=settings.ollama_url,
