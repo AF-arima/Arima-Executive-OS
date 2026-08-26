@@ -1,0 +1,31 @@
+name: provider-diagnostics-temp
+
+on:
+  push:
+    branches: [validation/provider-diagnostics-20260826]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+      - run: uv sync --no-install-project --extra dev
+      - name: Relevant tests
+        run: >-
+          uv run --no-project --with pytest-asyncio pytest -q
+          tests/orchestration tests/voice tests/providers/test_nvidia.py
+      - name: Ruff
+        run: >-
+          uv run --no-project --with ruff==0.15.22 ruff check
+          app/voice/observability.py app/orchestration/fallback.py
+          app/orchestration/pipeline.py app/providers/providers/nvidia.py
+          app/voice/gateway.py tests/voice/test_provider_diagnostics.py
+      - run: python -m compileall -q app
+      - run: git diff --check
