@@ -19,7 +19,7 @@ _SAFE_LOG_FIELDS = frozenset(
     "outcome attempt elapsed_ms duration_ms provider_timeout_ms failure_class "
     "exception_type status_code status_category timeout_category attempt_count "
     "providers_attempted failure_categories request_mode response_language stage "
-    "parse_failure_reason".split()
+    "parse_failure_reason finish_reason".split()
 )
 
 
@@ -90,6 +90,7 @@ _ALLOWED_EVENTS = frozenset(
         "provider_attempt_success",
         "provider_attempt_failure",
         "provider_post_200_failure",
+        "provider_finish_reason_invalid",
         "provider_fallback",
         "provider_fallback_exhausted",
         "orchestration_timeout",

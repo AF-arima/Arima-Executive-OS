@@ -485,6 +485,61 @@ def test_post_200_body_decode_failure_is_staged() -> None:
     assert failure["stage"] == "body_decode"
 
 
+def test_invalid_finish_reason_logs_only_safe_value_and_correlation() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "sensitive completion"},
+                        "finish_reason": "length",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            },
+        )
+
+    observer = VoiceExecutionObserver(None, "safe-session")
+    request = CompletionRequest(
+        model="safe-model",
+        messages=(ProviderMessage(role=MessageRole.USER, content="sensitive prompt"),),
+        metadata={
+            "_voice_observer": observer,
+            "provider_attempt": 1,
+            "voice_trace_id": observer.request_id,
+            "voice_session_id": observer.session_id,
+        },
+    )
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(ProviderUnavailable):
+                await _nvidia_provider(client).complete(request)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        records: list[object] = []
+        monkeypatch.setattr(
+            "app.providers.providers.nvidia.logger.warning",
+            lambda event, **kwargs: (
+                records.append(kwargs["extra"])
+                if event == "provider_finish_reason_invalid"
+                else None
+            ),
+        )
+        asyncio.run(scenario())
+
+    assert records == [
+        {
+            "correlation_id": observer.request_id,
+            "voice_session_id": observer.session_id,
+            "finish_reason": "length",
+        }
+    ]
+    assert "sensitive completion" not in repr(records)
+    assert "sensitive prompt" not in repr(records)
+
+
 @pytest.mark.parametrize(
     ("body", "reason"),
     [

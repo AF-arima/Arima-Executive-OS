@@ -365,6 +365,7 @@ class NvidiaProvider(ProviderAdapter):
             return
         try:
             reason = getattr(error, "parse_failure_reason", None)
+            finish_reason = getattr(error, "finish_reason", None)
             observer.emit(
                 "provider_post_200_failure",
                 attempt=attempt,
@@ -378,6 +379,15 @@ class NvidiaProvider(ProviderAdapter):
                 response_language=diagnostics.get("response_language"),
                 stage=stage,
             )
+            if reason == "finish_reason_invalid" and isinstance(finish_reason, str):
+                logger.warning(
+                    "provider_finish_reason_invalid",
+                    extra={
+                        "correlation_id": diagnostics.get("trace_id"),
+                        "voice_session_id": diagnostics.get("voice_session_id"),
+                        "finish_reason": finish_reason,
+                    },
+                )
         except Exception:
             return
 
@@ -551,10 +561,13 @@ class NvidiaProvider(ProviderAdapter):
                 if isinstance(finish_reason, str)
                 else "finish_reason=missing_or_invalid"
             )
-            raise NvidiaProvider._parse_failure(
+            error = NvidiaProvider._parse_failure(
                 "finish_reason_invalid",
                 f"NVIDIA provider returned an incomplete response ({detail})",
             )
+            if isinstance(finish_reason, str):
+                setattr(error, "finish_reason", finish_reason)
+            raise error
         if finish_reason == "stop" and not content.strip():
             raise NvidiaProvider._parse_failure(
                 "empty_completion", "NVIDIA provider returned no usable output"
