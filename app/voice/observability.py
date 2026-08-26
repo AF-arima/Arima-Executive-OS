@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
+
+import httpx
 
 logger = logging.getLogger("arima.voice.execution")
 
@@ -28,8 +31,59 @@ _ALLOWED_EVENTS = frozenset(
         "voice_request_completed",
         "voice_request_timeout",
         "voice_request_failed",
+        "provider_call_started",
+        "provider_call_finished",
+        "provider_call_failed",
+        "provider_attempt_start",
+        "provider_request_dispatched",
+        "provider_response_received",
+        "provider_attempt_success",
+        "provider_attempt_failure",
+        "provider_fallback",
+        "provider_fallback_exhausted",
+        "orchestration_timeout",
+        "orchestration_deadline_exceeded",
+        "fallback_exhausted",
     }
 )
+
+_FAILURE_CLASSES = {
+    "AuthenticationFailure": "provider_auth_error",
+    "RateLimitExceeded": "provider_rate_limit",
+    "ProviderTimeout": "provider_timeout",
+    "ProviderConfigurationError": "provider_unavailable",
+    "ProviderUnavailable": "provider_unavailable",
+    "VoiceExecutionTimeout": "orchestration_timeout",
+    "VoiceProviderUnavailable": "provider_unavailable",
+    "OrchestrationFallbackExhausted": "provider_unavailable",
+}
+
+
+def normalized_failure_class(error: BaseException) -> str:
+    """Return a safe, bounded category without inspecting exception text."""
+    if isinstance(error, asyncio.TimeoutError):
+        return "orchestration_timeout"
+    if isinstance(error, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout)):
+        return "provider_timeout"
+    if isinstance(error, httpx.ConnectError):
+        return "provider_connection_error"
+    if isinstance(error, httpx.TransportError):
+        return "provider_connection_error"
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        if status in {401, 403}:
+            return "provider_auth_error"
+        if status == 429:
+            return "provider_rate_limit"
+        return "provider_http_error"
+    status_value: object = getattr(error, "status_code", None)
+    if isinstance(status_value, int):
+        if status_value in {401, 403}:
+            return "provider_auth_error"
+        if status_value == 429:
+            return "provider_rate_limit"
+        return "provider_http_error"
+    return _FAILURE_CLASSES.get(type(error).__name__, "provider_unknown_error")
 
 
 def correlation_id(value: str | UUID | None = None) -> str:
@@ -63,6 +117,20 @@ class VoiceExecutionObserver:
         attempt: int | None = None,
         provider: str | None = None,
         outcome: str | None = None,
+        duration_ms: float | None = None,
+        deadline_remaining_ms: float | None = None,
+        provider_timeout_ms: float | None = None,
+        failure_class: str | None = None,
+        exception_type: str | None = None,
+        status_code: int | None = None,
+        status_category: str | None = None,
+        timeout_category: str | None = None,
+        attempt_count: int | None = None,
+        providers_attempted: tuple[str, ...] | None = None,
+        failure_categories: tuple[str, ...] | None = None,
+        request_mode: str | None = None,
+        response_language: str | None = None,
+        model: str | None = None,
     ) -> None:
         if event not in _ALLOWED_EVENTS:
             raise ValueError(f"Unsupported voice execution event: {event}")
@@ -78,6 +146,23 @@ class VoiceExecutionObserver:
             payload["provider"] = provider
         if outcome is not None:
             payload["outcome"] = outcome
+        safe_fields = {
+            "duration_ms": duration_ms,
+            "deadline_remaining_ms": deadline_remaining_ms,
+            "provider_timeout_ms": provider_timeout_ms,
+            "failure_class": failure_class,
+            "exception_type": exception_type,
+            "status_code": status_code,
+            "status_category": status_category,
+            "timeout_category": timeout_category,
+            "attempt_count": attempt_count,
+            "providers_attempted": providers_attempted,
+            "failure_categories": failure_categories,
+            "request_mode": request_mode,
+            "response_language": response_language,
+            "model": model,
+        }
+        payload.update({key: value for key, value in safe_fields.items() if value is not None})
         self.sink(event, payload)
 
     @staticmethod
@@ -88,3 +173,16 @@ class VoiceExecutionObserver:
 def observer_from_context(context: Any) -> VoiceExecutionObserver | None:
     observer = context.request.metadata.get("_voice_observer")
     return observer if isinstance(observer, VoiceExecutionObserver) else None
+
+
+def observer_from_metadata(metadata: Any) -> VoiceExecutionObserver | None:
+    if not isinstance(metadata, dict):
+        return None
+    observer = metadata.get("_voice_observer")
+    return observer if isinstance(observer, VoiceExecutionObserver) else None
+
+
+def http_status_category(status_code: int | None) -> str | None:
+    if not isinstance(status_code, int) or status_code < 100:
+        return None
+    return f"{status_code // 100}xx"

@@ -200,15 +200,39 @@ class OrchestrationPipeline(HealthContract):
             )
             await self._record_native_executions(context, native_executions)
         else:
-            response, provider_retries = await self.fallback.retry(
-                lambda: provider.complete(
+            provider_metadata: dict[str, object] = {}
+            if observer is not None:
+                provider_metadata = {
+                    "voice_trace_id": observer.request_id,
+                    "voice_session_id": observer.session_id,
+                    "request_mode": self.provider_prompt.request_mode(
+                        context.request.content
+                    ),
+                    "response_language": detect_response_language(
+                        context.request.content
+                    ),
+                    "_voice_observer": observer,
+                }
+            provider_attempt = 0
+
+            async def complete_provider():
+                nonlocal provider_attempt
+                provider_attempt += 1
+                return await provider.complete(
                     CompletionRequest(
                         model=model,
                         messages=provider_messages,
                         max_output_tokens=context.request.max_output_tokens,
                         json_mode=context.request.require_json,
+                        metadata={
+                            **provider_metadata,
+                            "provider_attempt": provider_attempt,
+                        },
                     )
-                ),
+                )
+
+            response, provider_retries = await self.fallback.retry(
+                complete_provider,
                 deadline=context.execution_deadline,
                 observer=observer.emit if observer is not None else None,
                 provider_name=provider.provider.value,

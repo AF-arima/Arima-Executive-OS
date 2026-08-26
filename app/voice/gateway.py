@@ -26,7 +26,9 @@ from app.voice.exceptions import (
     VoicePermissionDenied,
     VoiceProviderUnavailable,
 )
-from app.voice.observability import VoiceExecutionObserver
+from app.voice.observability import VoiceExecutionObserver, normalized_failure_class
+from app.orchestration.market_response import detect_response_language
+from app.orchestration.provider_prompt import ProviderPromptBuilder
 from app.voice.exceptions import VoiceSessionBusy
 from app.voice.health import voice_health
 from app.voice.schemas import (
@@ -211,11 +213,13 @@ class VoiceGateway:
             raise
         except Exception as error:
             observer.emit(
-                "voice_request_timeout"
-                if isinstance(error, VoiceExecutionTimeout)
-                else "voice_request_failed",
+                "voice_request_failed",
                 outcome="timeout" if isinstance(error, VoiceExecutionTimeout) else "failed",
+                failure_class=normalized_failure_class(error),
+                exception_type=type(error).__name__,
             )
+            if isinstance(error, VoiceExecutionTimeout):
+                observer.emit("voice_request_timeout", outcome="timeout")
             await self.sessions.rollback()
             failed = await self.sessions.get(session_id, actor_id)
             if failed.state not in {
@@ -378,6 +382,20 @@ class VoiceGateway:
                 timeout=self.execution_timeout_seconds,
             )
         except asyncio.TimeoutError as error:
+            observer.emit(
+                "orchestration_deadline_exceeded",
+                outcome="timeout",
+                failure_class="orchestration_timeout",
+                exception_type=type(error).__name__,
+                duration_ms=round(self.execution_timeout_seconds * 1000, 2),
+            )
+            observer.emit(
+                "orchestration_timeout",
+                outcome="timeout",
+                failure_class="orchestration_timeout",
+                timeout_category="orchestration_timeout",
+                duration_ms=round(self.execution_timeout_seconds * 1000, 2),
+            )
             raise VoiceExecutionTimeout(
                 "Voice provider timed out before completing execution"
             ) from error
@@ -417,7 +435,12 @@ class VoiceGateway:
             run_id=context.run.id,
             correlation_id=context.correlation_id,
         )
-        observer.emit("orchestration_started", outcome="started")
+        observer.emit(
+            "orchestration_started",
+            outcome="started",
+            request_mode=ProviderPromptBuilder.request_mode(transcript),
+            response_language=detect_response_language(transcript),
+        )
         try:
             result = await self.orchestration.execute(context)
         except OrchestrationFallbackExhausted as error:
