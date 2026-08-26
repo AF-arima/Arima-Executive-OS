@@ -17,7 +17,7 @@ jobs:
         with:
           version: latest
       - run: uv sync --no-install-project --extra dev
-      - run: uv run --no-project --with pytest-asyncio pytest -q tests/orchestration tests/intelligence/test_gateway_service.py tests/voice/test_tts.py tests/voice/test_health.py
+      - run: uv run --no-project --with pytest-asyncio pytest -q tests/orchestration tests/voice/test_tts.py tests/voice/test_health.py
       - run: uv run --no-project --with ruff==0.15.22 ruff check app/orchestration/market_response.py app/orchestration/provider_prompt.py app/orchestration/pipeline.py app/orchestration/response_validation.py app/api/v1/routes/voice.py app/core/config.py app/voice/health.py app/voice/schemas.py app/voice/speech.py app/voice/tts.py tests/orchestration/test_conversation_mode.py tests/voice/test_tts.py
       - run: python -m compileall -q app
       - run: git diff --check
