@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
 import json
+import logging
 from time import perf_counter
 from typing import Any
 
@@ -30,6 +31,9 @@ from app.providers.types import (
     ProviderToolCall,
     ProviderToolResult,
 )
+from app.voice.observability import normalized_failure_class
+
+logger = logging.getLogger("arima.provider.execution")
 
 
 class NvidiaProvider(ProviderAdapter):
@@ -116,14 +120,49 @@ class NvidiaProvider(ProviderAdapter):
             )
             if isinstance(chat_template_kwargs, Mapping):
                 payload["chat_template_kwargs"] = dict(chat_template_kwargs)
+        diagnostics = self._diagnostic_fields(request)
         started = perf_counter()
-        if self._client is not None:
-            response = await self._post(self._client, headers, payload)
-        else:
-            async with httpx.AsyncClient(
-                timeout=self._timeout_seconds
-            ) as client:
-                response = await self._post(client, headers, payload)
+        logger.info(
+            "provider_call_started",
+            extra={
+                **diagnostics,
+                "provider": self.provider.value,
+                "model": request.model,
+                "provider_timeout_ms": round(self._timeout_seconds * 1000, 2),
+            },
+        )
+        try:
+            if self._client is not None:
+                response = await self._post(self._client, headers, payload)
+            else:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds
+                ) as client:
+                    response = await self._post(client, headers, payload)
+        except Exception as error:
+            logger.warning(
+                "provider_call_failed",
+                extra={
+                    **diagnostics,
+                    "provider": self.provider.value,
+                    "model": request.model,
+                    "duration_ms": round((perf_counter() - started) * 1000, 2),
+                    "failure_class": normalized_failure_class(error),
+                    "exception_type": type(error).__name__,
+                    "status_code": getattr(error, "status_code", None),
+                },
+            )
+            raise
+        logger.info(
+            "provider_call_finished",
+            extra={
+                **diagnostics,
+                "provider": self.provider.value,
+                "model": request.model,
+                "duration_ms": round((perf_counter() - started) * 1000, 2),
+                "status_code": response.status_code,
+            },
+        )
         latency_ms = max(int((perf_counter() - started) * 1_000), 0)
         body = self._response_body(response)
         content, finish_reason, tool_calls = self._completion(body)
@@ -217,6 +256,25 @@ class NvidiaProvider(ProviderAdapter):
                 "NVIDIA provider temperature must not exceed one"
             )
 
+    @staticmethod
+    def _diagnostic_fields(request: CompletionRequest) -> dict[str, object]:
+        allowed = {
+            "trace_id": request.metadata.get("voice_trace_id"),
+            "voice_session_id": request.metadata.get("voice_session_id"),
+            "request_mode": request.metadata.get("request_mode"),
+            "response_language": request.metadata.get("response_language"),
+        }
+        return {
+            key: value
+            for key, value in allowed.items()
+            if isinstance(value, str)
+        }
+
+    @staticmethod
+    def _with_status(error: Exception, status_code: int) -> Exception:
+        setattr(error, "status_code", status_code)
+        return error
+
     async def _post(
         self,
         client: httpx.AsyncClient,
@@ -234,14 +292,21 @@ class NvidiaProvider(ProviderAdapter):
         except httpx.HTTPError as error:
             raise ProviderUnavailable("NVIDIA request failed") from error
         if response.status_code in {401, 403}:
-            raise AuthenticationFailure(
-                "NVIDIA provider authentication failed"
+            raise self._with_status(
+                AuthenticationFailure("NVIDIA provider authentication failed"),
+                response.status_code,
             )
         if response.status_code == 429:
-            raise RateLimitExceeded("NVIDIA provider rate limit exceeded")
+            raise self._with_status(
+                RateLimitExceeded("NVIDIA provider rate limit exceeded"),
+                response.status_code,
+            )
         if response.status_code != 200:
-            raise ProviderUnavailable(
-                f"NVIDIA provider rejected the request (HTTP {response.status_code})"
+            raise self._with_status(
+                ProviderUnavailable(
+                    "NVIDIA provider rejected the request"
+                ),
+                response.status_code,
             )
         return response
 

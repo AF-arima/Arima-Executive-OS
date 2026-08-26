@@ -1,11 +1,13 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from time import perf_counter
 from typing import TypeVar
 
 from app.orchestration.exceptions import OrchestrationFallbackExhausted
 from app.core.redaction import safe_failure_detail
 from app.orchestration.health import HealthContract
 from app.orchestration.policy import OrchestrationPolicy
+from app.voice.observability import normalized_failure_class
 from app.providers.base import ProviderAdapter
 
 ResultT = TypeVar("ResultT")
@@ -26,8 +28,14 @@ class OrchestrationFallback(HealthContract):
         provider_name: str | None = None,
     ) -> tuple[ResultT, int]:
         last_error: Exception | None = None
+        started_total = perf_counter()
+        attempts: list[str] = []
+        failure_categories: list[str] = []
         for retry in range(self.policy.maximum_retries + 1):
             attempt = retry + 1
+            attempt_started = perf_counter()
+            if provider_name is not None:
+                attempts.append(provider_name)
             if observer is not None and provider_name is not None:
                 observer(
                     "provider_attempt_started",
@@ -50,6 +58,7 @@ class OrchestrationFallback(HealthContract):
                         attempt=attempt,
                         provider=provider_name,
                         outcome="success",
+                        duration_ms=round((perf_counter() - attempt_started) * 1000, 2),
                     )
                 return result, retry
             except asyncio.CancelledError:
@@ -62,22 +71,34 @@ class OrchestrationFallback(HealthContract):
                     )
                 raise
             except asyncio.TimeoutError:
+                category = "orchestration_timeout"
+                failure_categories.append(category)
                 if observer is not None and provider_name is not None:
                     observer(
                         "provider_attempt_failed",
                         attempt=attempt,
                         provider=provider_name,
                         outcome="timeout",
+                        duration_ms=round((perf_counter() - attempt_started) * 1000, 2),
+                        failure_class=category,
+                        exception_type="TimeoutError",
+                        deadline_remaining_ms=0,
                     )
                 raise
             except Exception as error:
                 last_error = error
+                category = normalized_failure_class(error)
+                failure_categories.append(category)
                 if observer is not None and provider_name is not None:
                     observer(
                         "provider_attempt_failed",
                         attempt=attempt,
                         provider=provider_name,
                         outcome="failed",
+                        duration_ms=round((perf_counter() - attempt_started) * 1000, 2),
+                        failure_class=category,
+                        exception_type=type(error).__name__,
+                        status_code=getattr(error, "status_code", None),
                     )
                     if attempt <= self.policy.maximum_retries:
                         observer(
@@ -86,6 +107,18 @@ class OrchestrationFallback(HealthContract):
                             provider=provider_name,
                             outcome="started",
                         )
+        if observer is not None:
+            observer(
+                "fallback_exhausted",
+                provider=provider_name,
+                outcome="failed",
+                duration_ms=round((perf_counter() - started_total) * 1000, 2),
+                failure_class="provider_unavailable",
+                exception_type=(type(last_error).__name__ if last_error else None),
+                attempt_count=len(attempts),
+                providers_attempted=tuple(attempts),
+                failure_categories=tuple(failure_categories),
+            )
         raise OrchestrationFallbackExhausted(
             safe_failure_detail(
                 "Orchestration fallback exhausted",
