@@ -1,0 +1,29 @@
+name: Validate multilingual conversation routing
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - name: Install project dependencies
+        run: uv sync --extra dev
+      - name: Focused orchestration tests
+        run: uv run pytest -q tests/orchestration/test_conversation_mode.py tests/orchestration/test_provider_safety.py
+      - name: Gateway and identity tests
+        run: uv run pytest -q tests/intelligence/test_gateway_service.py tests/orchestration/test_identity_contract.py
+      - name: Release-scoped Ruff
+        run: uv run ruff check app/orchestration tests/orchestration/test_conversation_mode.py
+      - name: Full Ruff (known pre-existing findings are reported)
+        continue-on-error: true
+        run: uv run ruff check .
+      - name: Compile
+        run: python -m compileall app
+      - name: Diff check
+        run: git diff --check
