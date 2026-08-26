@@ -13,10 +13,12 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.database.session import engine
+from app.voice.observability import configure_execution_loggers
 
 settings = get_settings()
 logger = logging.getLogger("arima.request")
 logger.setLevel(settings.log_level)
+configure_execution_loggers(logging._nameToLevel[settings.log_level])
 
 
 @asynccontextmanager

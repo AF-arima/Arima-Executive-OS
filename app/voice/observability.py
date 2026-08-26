@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import sys
 from collections.abc import Callable
 from time import perf_counter
 from typing import Any
@@ -10,6 +12,53 @@ from uuid import UUID, uuid4
 import httpx
 
 logger = logging.getLogger("arima.voice.execution")
+
+_SINK_HANDLER_NAME = "arima-voice-execution-sink"
+_SAFE_LOG_FIELDS = frozenset(
+    "correlation_id voice_session_id voice_trace_id event provider model "
+    "outcome attempt elapsed_ms duration_ms provider_timeout_ms failure_class "
+    "exception_type status_code status_category timeout_category attempt_count "
+    "providers_attempted failure_categories request_mode response_language".split()
+)
+
+
+class _ExecutionTelemetryFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            field: getattr(record, field)
+            for field in _SAFE_LOG_FIELDS
+            if hasattr(record, field)
+        }
+        event = payload.get("event")
+        if event not in _ALLOWED_EVENTS:
+            event = (
+                record.msg
+                if isinstance(record.msg, str)
+                and record.msg in _ALLOWED_EVENTS
+                else None
+            )
+        if event is None:
+            payload.pop("event", None)
+        else:
+            payload["event"] = event
+        return json.dumps(payload, separators=(",", ":"), default=str)
+
+
+def configure_execution_loggers(level: int) -> None:
+    """Send sanitized execution telemetry to the process stdout sink once."""
+    for name in ("arima.voice.execution", "arima.provider.execution"):
+        execution_logger = logging.getLogger(name)
+        execution_logger.setLevel(level)
+        execution_logger.propagate = False
+        if not any(
+            handler.name == _SINK_HANDLER_NAME
+            for handler in execution_logger.handlers
+        ):
+            handler = logging.StreamHandler(sys.stdout)
+            handler.name = _SINK_HANDLER_NAME
+            handler.setLevel(logging.NOTSET)
+            handler.setFormatter(_ExecutionTelemetryFormatter())
+            execution_logger.addHandler(handler)
 
 _ALLOWED_EVENTS = frozenset(
     {
