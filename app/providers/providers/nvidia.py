@@ -40,6 +40,7 @@ from app.voice.observability import (
 )
 
 logger = logging.getLogger("arima.provider.execution")
+plain_logger = logging.getLogger("arima.request")
 
 SAFETY_MARGIN_SECONDS = 2.0
 MIN_TIMEOUT_SECONDS = 5.0
@@ -386,7 +387,19 @@ class NvidiaProvider(ProviderAdapter):
                         "correlation_id": diagnostics.get("trace_id"),
                         "voice_session_id": diagnostics.get("voice_session_id"),
                         "finish_reason": finish_reason,
+                        "summary": (
+                            "provider_finish_reason_invalid "
+                            f"session={diagnostics.get('voice_session_id')} "
+                            f"correlation={diagnostics.get('trace_id')} "
+                            f"finish_reason={finish_reason}"
+                        ),
                     },
+                )
+                plain_logger.warning(
+                    "provider_finish_reason_invalid "
+                    f"session={diagnostics.get('voice_session_id')} "
+                    f"correlation={diagnostics.get('trace_id')} "
+                    f"finish_reason={finish_reason}"
                 )
         except Exception:
             return

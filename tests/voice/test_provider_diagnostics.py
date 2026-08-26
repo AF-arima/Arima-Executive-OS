@@ -534,10 +534,69 @@ def test_invalid_finish_reason_logs_only_safe_value_and_correlation() -> None:
             "correlation_id": observer.request_id,
             "voice_session_id": observer.session_id,
             "finish_reason": "length",
+            "summary": (
+                "provider_finish_reason_invalid "
+                f"session={observer.session_id} "
+                f"correlation={observer.request_id} finish_reason=length"
+            ),
         }
     ]
     assert "sensitive completion" not in repr(records)
     assert "sensitive prompt" not in repr(records)
+
+
+def test_invalid_finish_reason_emits_plain_safe_summary() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "private completion"},
+                        "finish_reason": "length",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            },
+        )
+
+    observer = VoiceExecutionObserver(None, "safe-session")
+    request = CompletionRequest(
+        model="safe-model",
+        messages=(ProviderMessage(role=MessageRole.USER, content="private prompt"),),
+        metadata={
+            "_voice_observer": observer,
+            "provider_attempt": 1,
+            "voice_trace_id": observer.request_id,
+            "voice_session_id": observer.session_id,
+        },
+    )
+    plain_records: list[tuple[str, dict[str, object]]] = []
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(ProviderUnavailable):
+                await _nvidia_provider(client).complete(request)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            "app.providers.providers.nvidia.plain_logger.warning",
+            lambda message, **kwargs: plain_records.append((message, kwargs)),
+        )
+        asyncio.run(scenario())
+
+    assert plain_records == [
+        (
+            (
+                "provider_finish_reason_invalid "
+                f"session={observer.session_id} "
+                f"correlation={observer.request_id} finish_reason=length"
+            ),
+            {},
+        )
+    ]
+    assert "private completion" not in repr(plain_records)
+    assert "private prompt" not in repr(plain_records)
 
 
 @pytest.mark.parametrize(
