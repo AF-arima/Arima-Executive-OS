@@ -350,8 +350,7 @@ def test_nvidia_invalid_success_response_fails_closed() -> None:
     asyncio.run(scenario())
 
 
-def test_nvidia_truncated_response_and_unsupported_temperature_fail_closed(
-) -> None:
+def test_nvidia_truncated_response_with_content_is_returned() -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -370,21 +369,50 @@ def test_nvidia_truncated_response_and_unsupported_temperature_fail_closed(
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(handler)
         ) as client:
-            provider = NvidiaProvider(configuration(), client=client)
-            with pytest.raises(
-                ProviderUnavailable,
-                match=r"incomplete response \(finish_reason=length\)",
-            ):
-                await provider.complete(request())
-            with pytest.raises(
-                ProviderConfigurationError, match="temperature"
-            ):
-                await provider.complete(
-                    CompletionRequest(
-                        model=VERIFIED_MODEL,
-                        messages=request().messages,
-                        temperature=1.1,
-                    )
+            result = await NvidiaProvider(configuration(), client=client).complete(request())
+            assert result.content == "Partial response"
+            assert result.finish_reason == "length"
+
+    asyncio.run(scenario())
+
+
+def test_nvidia_empty_truncated_response_fails_closed(
+) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": ""},
+                        "finish_reason": "length",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            with pytest.raises(ProviderUnavailable, match="truncated") as caught:
+                await NvidiaProvider(configuration(), client=client).complete(request())
+            assert getattr(caught.value, "parse_failure_reason") == "truncated_completion"
+
+    asyncio.run(scenario())
+
+
+def test_nvidia_unsupported_temperature_still_fails_closed(
+) -> None:
+    async def scenario() -> None:
+        with pytest.raises(ProviderConfigurationError, match="temperature"):
+            await NvidiaProvider(configuration(), client=None).complete(
+                CompletionRequest(
+                    model=VERIFIED_MODEL,
+                    messages=request().messages,
+                    temperature=1.1,
                 )
+            )
 
     asyncio.run(scenario())

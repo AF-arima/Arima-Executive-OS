@@ -397,6 +397,18 @@ def test_nvidia_boundary_failure_is_normalized_at_adapter() -> None:
             },
             "usage_parse",
         ),
+        (
+            {
+                "choices": [{"message": {"content": "partial"}, "finish_reason": "length"}],
+            },
+            "usage_parse",
+        ),
+        (
+            {
+                "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+            },
+            "completion_parse",
+        ),
     ],
 )
 def test_post_200_failures_are_staged_without_private_details(
@@ -493,7 +505,7 @@ def test_invalid_finish_reason_logs_only_safe_value_and_correlation() -> None:
                 "choices": [
                     {
                         "message": {"content": "sensitive completion"},
-                        "finish_reason": "length",
+                        "finish_reason": "unexpected_reason",
                     }
                 ],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
@@ -533,11 +545,11 @@ def test_invalid_finish_reason_logs_only_safe_value_and_correlation() -> None:
         {
             "correlation_id": observer.request_id,
             "voice_session_id": observer.session_id,
-            "finish_reason": "length",
+            "finish_reason": "unexpected_reason",
             "summary": (
                 "provider_finish_reason_invalid "
                 f"session={observer.session_id} "
-                f"correlation={observer.request_id} finish_reason=length"
+                f"correlation={observer.request_id} finish_reason=unexpected_reason"
             ),
         }
     ]
@@ -553,7 +565,7 @@ def test_invalid_finish_reason_emits_plain_safe_summary() -> None:
                 "choices": [
                     {
                         "message": {"content": "private completion"},
-                        "finish_reason": "length",
+                        "finish_reason": "unexpected_reason",
                     }
                 ],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
@@ -590,7 +602,7 @@ def test_invalid_finish_reason_emits_plain_safe_summary() -> None:
             (
                 "provider_finish_reason_invalid "
                 f"session={observer.session_id} "
-                f"correlation={observer.request_id} finish_reason=length"
+                f"correlation={observer.request_id} finish_reason=unexpected_reason"
             ),
             {},
         )

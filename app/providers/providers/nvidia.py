@@ -60,6 +60,7 @@ _POST_200_PARSE_FAILURE_REASONS = frozenset(
         "finish_reason_invalid",
         "empty_completion",
         "empty_tool_calls",
+        "truncated_completion",
     }
 )
 
@@ -568,7 +569,7 @@ class NvidiaProvider(ProviderAdapter):
             )
         tool_calls = NvidiaProvider._parse_tool_calls(message.get("tool_calls"))
         finish_reason = choice.get("finish_reason")
-        if finish_reason not in {"stop", "tool_calls"}:
+        if finish_reason not in {"stop", "tool_calls", "length"}:
             detail = (
                 f"finish_reason={finish_reason}"
                 if isinstance(finish_reason, str)
@@ -581,6 +582,11 @@ class NvidiaProvider(ProviderAdapter):
             if isinstance(finish_reason, str):
                 setattr(error, "finish_reason", finish_reason)
             raise error
+        if finish_reason == "length" and not content.strip():
+            raise NvidiaProvider._parse_failure(
+                "truncated_completion",
+                "NVIDIA provider response was truncated before completion",
+            )
         if finish_reason == "stop" and not content.strip():
             raise NvidiaProvider._parse_failure(
                 "empty_completion", "NVIDIA provider returned no usable output"
