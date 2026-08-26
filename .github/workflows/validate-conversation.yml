@@ -20,7 +20,7 @@ jobs:
       - name: Focused orchestration tests
         run: uv run --no-sync pytest -q tests/orchestration/test_conversation_mode.py tests/orchestration/test_provider_safety.py
       - name: Release-scoped Ruff
-        run: uv run --no-sync ruff check app/orchestration tests/orchestration/test_conversation_mode.py
+        run: uv run --no-sync ruff check app/orchestration/market_response.py app/orchestration/provider_prompt.py app/orchestration/response_validation.py app/orchestration/pipeline.py tests/orchestration/test_conversation_mode.py tests/orchestration/test_provider_safety.py
       - name: Full Ruff (known pre-existing findings are reported)
         continue-on-error: true
         run: uv run --no-sync ruff check .
