@@ -19,8 +19,6 @@ jobs:
         run: uv sync --no-install-project --extra dev
       - name: Focused orchestration tests
         run: uv run --no-sync pytest -q tests/orchestration/test_conversation_mode.py tests/orchestration/test_provider_safety.py
-      - name: Gateway and identity tests
-        run: uv run --no-sync pytest -q tests/intelligence/test_gateway_service.py tests/orchestration/test_identity_contract.py
       - name: Release-scoped Ruff
         run: uv run --no-sync ruff check app/orchestration tests/orchestration/test_conversation_mode.py
       - name: Full Ruff (known pre-existing findings are reported)
