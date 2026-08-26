@@ -330,6 +330,121 @@ def test_post_200_body_decode_failure_is_staged() -> None:
     assert failure["stage"] == "body_decode"
 
 
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        ({}, "choices_missing_or_invalid"),
+        ({"choices": "invalid"}, "choices_missing_or_invalid"),
+        ({"choices": ["invalid"]}, "choice_invalid"),
+        ({"choices": [{"message": "invalid"}]}, "message_missing_or_invalid"),
+        (
+            {"choices": [{"message": {"content": 1}, "finish_reason": "stop"}]},
+            "content_invalid",
+        ),
+        (
+            {"choices": [{"message": {"content": "ok", "tool_calls": "invalid"}, "finish_reason": "stop"}]},
+            "tool_calls_not_list",
+        ),
+        (
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "invalid"}]
+            },
+            "finish_reason_invalid",
+        ),
+        (
+            {"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]},
+            "empty_completion",
+        ),
+        (
+            {"choices": [{"message": {"content": "ok"}, "finish_reason": "tool_calls"}]},
+            "empty_tool_calls",
+        ),
+        (
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [{"id": "call", "function": {}}],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+            "tool_call_function_invalid",
+        ),
+        (
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [{"function": {"name": "tool"}}],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+            "tool_call_missing_id",
+        ),
+        (
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {"id": "call", "function": {"name": "tool", "arguments": 1}}
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+            "tool_arguments_invalid_type",
+        ),
+        (
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {"id": "call", "function": {"name": "tool", "arguments": "not-json"}}
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+            "tool_arguments_invalid_json",
+        ),
+        (
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {"id": "call", "function": {"name": "tool", "arguments": "[]"}}
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+            "tool_arguments_not_object",
+        ),
+    ],
+)
+def test_completion_parse_failures_have_static_safe_reasons(
+    body: dict[str, object], reason: str
+) -> None:
+    with pytest.raises(ProviderUnavailable) as captured:
+        NvidiaProvider._completion(body)
+    assert getattr(captured.value, "parse_failure_reason") == reason
+
+
 def test_post_200_success_emit_failure_is_staged_without_message() -> None:
     events: list[tuple[str, dict[str, object]]] = []
 

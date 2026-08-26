@@ -40,6 +40,24 @@ from app.voice.observability import (
 
 logger = logging.getLogger("arima.provider.execution")
 
+_POST_200_PARSE_FAILURE_REASONS = frozenset(
+    {
+        "choices_missing_or_invalid",
+        "choice_invalid",
+        "message_missing_or_invalid",
+        "content_invalid",
+        "tool_calls_not_list",
+        "tool_call_missing_id",
+        "tool_call_function_invalid",
+        "tool_arguments_invalid_type",
+        "tool_arguments_invalid_json",
+        "tool_arguments_not_object",
+        "finish_reason_invalid",
+        "empty_completion",
+        "empty_tool_calls",
+    }
+)
+
 
 class NvidiaProvider(ProviderAdapter):
     """Server-side NVIDIA NIM chat-completions adapter."""
@@ -318,12 +336,16 @@ class NvidiaProvider(ProviderAdapter):
         if observer is None:
             return
         try:
+            reason = getattr(error, "parse_failure_reason", None)
             observer.emit(
                 "provider_post_200_failure",
                 attempt=attempt,
                 provider=ProviderName.NVIDIA.value,
                 failure_class=normalized_failure_class(error),
                 exception_type=type(error).__name__,
+                parse_failure_reason=(
+                    reason if reason in _POST_200_PARSE_FAILURE_REASONS else None
+                ),
                 request_mode=diagnostics.get("request_mode"),
                 response_language=diagnostics.get("response_language"),
                 stage=stage,
@@ -473,22 +495,24 @@ class NvidiaProvider(ProviderAdapter):
     def _completion(body: Mapping[str, Any]) -> tuple[str, str, tuple[ProviderToolCall, ...]]:
         choices = body.get("choices")
         if not isinstance(choices, list) or len(choices) != 1:
-            raise ProviderUnavailable(
-                "NVIDIA provider returned no usable output"
+            raise NvidiaProvider._parse_failure(
+                "choices_missing_or_invalid", "NVIDIA provider returned no usable output"
             )
         choice = choices[0]
         if not isinstance(choice, dict):
-            raise ProviderUnavailable(
-                "NVIDIA provider returned no usable output"
+            raise NvidiaProvider._parse_failure(
+                "choice_invalid", "NVIDIA provider returned no usable output"
             )
         message = choice.get("message")
         if not isinstance(message, dict):
-            raise ProviderUnavailable(
-                "NVIDIA provider returned no usable output"
+            raise NvidiaProvider._parse_failure(
+                "message_missing_or_invalid", "NVIDIA provider returned no usable output"
             )
         content = message.get("content") or ""
         if not isinstance(content, str):
-            raise ProviderUnavailable("NVIDIA provider returned invalid content")
+            raise NvidiaProvider._parse_failure(
+                "content_invalid", "NVIDIA provider returned invalid content"
+            )
         tool_calls = NvidiaProvider._parse_tool_calls(message.get("tool_calls"))
         finish_reason = choice.get("finish_reason")
         if finish_reason not in {"stop", "tool_calls"}:
@@ -497,37 +521,64 @@ class NvidiaProvider(ProviderAdapter):
                 if isinstance(finish_reason, str)
                 else "finish_reason=missing_or_invalid"
             )
-            raise ProviderUnavailable(
-                f"NVIDIA provider returned an incomplete response ({detail})"
+            raise NvidiaProvider._parse_failure(
+                "finish_reason_invalid",
+                f"NVIDIA provider returned an incomplete response ({detail})",
             )
         if finish_reason == "stop" and not content.strip():
-            raise ProviderUnavailable("NVIDIA provider returned no usable output")
+            raise NvidiaProvider._parse_failure(
+                "empty_completion", "NVIDIA provider returned no usable output"
+            )
         if finish_reason == "tool_calls" and not tool_calls:
-            raise ProviderUnavailable("NVIDIA provider returned empty tool calls")
+            raise NvidiaProvider._parse_failure(
+                "empty_tool_calls", "NVIDIA provider returned empty tool calls"
+            )
         return content.strip(), finish_reason, tool_calls
+
+    @staticmethod
+    def _parse_failure(reason: str, message: str) -> ProviderUnavailable:
+        error = ProviderUnavailable(message)
+        setattr(error, "parse_failure_reason", reason)
+        return error
 
     @staticmethod
     def _parse_tool_calls(raw: object) -> tuple[ProviderToolCall, ...]:
         if raw is None:
             return ()
         if not isinstance(raw, list):
-            raise ProviderUnavailable("NVIDIA provider returned malformed tool calls")
+            raise NvidiaProvider._parse_failure(
+                "tool_calls_not_list", "NVIDIA provider returned malformed tool calls"
+            )
         parsed: list[ProviderToolCall] = []
         for item in raw:
             if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-                raise ProviderUnavailable("NVIDIA provider returned malformed tool call")
+                raise NvidiaProvider._parse_failure(
+                    "tool_call_missing_id", "NVIDIA provider returned malformed tool call"
+                )
             function = item.get("function")
             if not isinstance(function, dict) or not isinstance(function.get("name"), str):
-                raise ProviderUnavailable("NVIDIA provider returned malformed tool call")
+                raise NvidiaProvider._parse_failure(
+                    "tool_call_function_invalid",
+                    "NVIDIA provider returned malformed tool call",
+                )
             arguments = function.get("arguments", "{}")
             if not isinstance(arguments, str):
-                raise ProviderUnavailable("NVIDIA provider returned malformed tool arguments")
+                raise NvidiaProvider._parse_failure(
+                    "tool_arguments_invalid_type",
+                    "NVIDIA provider returned malformed tool arguments",
+                )
             try:
                 decoded = json.loads(arguments)
             except (TypeError, ValueError) as error:
-                raise ProviderUnavailable("NVIDIA provider returned invalid tool arguments") from error
+                raise NvidiaProvider._parse_failure(
+                    "tool_arguments_invalid_json",
+                    "NVIDIA provider returned invalid tool arguments",
+                ) from error
             if not isinstance(decoded, dict):
-                raise ProviderUnavailable("NVIDIA provider tool arguments must be an object")
+                raise NvidiaProvider._parse_failure(
+                    "tool_arguments_not_object",
+                    "NVIDIA provider tool arguments must be an object",
+                )
             parsed.append(ProviderToolCall(function["name"], item["id"], decoded))
         return tuple(parsed)
 
