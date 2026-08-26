@@ -1,0 +1,62 @@
+name: validate-exact-candidate-scoped-temp
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact candidate commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact candidate SHA
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --no-install-project --extra dev
+
+      - name: Telemetry tests
+        run: uv run --no-project --with pytest-asyncio pytest -q tests/voice/test_provider_diagnostics.py
+
+      - name: Relevant voice/provider/orchestration tests
+        run: uv run --no-project --with pytest-asyncio pytest -q tests/voice tests/providers tests/orchestration
+
+      - name: Explicit 503/504 regression tests
+        run: uv run --no-project --with pytest-asyncio pytest -q tests/voice/test_api.py -k 'timeout or unavailability'
+
+      - name: Security and sanitization tests
+        run: uv run --no-project --with pytest-asyncio pytest -q tests/voice/test_provider_diagnostics.py tests/orchestration/test_provider_safety.py
+
+      - name: Telemetry-scoped Ruff
+        run: uv run --no-project --with ruff==0.15.22 ruff check app/voice/observability.py app/orchestration/fallback.py app/orchestration/pipeline.py app/providers/providers/nvidia.py app/voice/gateway.py tests/voice/test_provider_diagnostics.py
+
+      - name: Full repository Ruff (known baseline debt)
+        continue-on-error: true
+        run: uv run --no-project --with ruff==0.15.22 ruff check .
+
+      - name: Compile application
+        run: python -m compileall -q app
+
+      - name: Git diff check
+        run: git diff --check
