@@ -361,6 +361,8 @@ class OrchestrationPipeline(HealthContract):
             self.native_tool_registry.declarations()
             and metadata.get("tenant_id")
             and metadata.get("workspace_id")
+            and self.provider_prompt.request_mode(context.request.content)
+            != "conversation"
         )
 
     async def _native_context(

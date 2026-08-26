@@ -98,7 +98,10 @@ class OrchestrationPlanner(HealthContract):
                     flags=re.IGNORECASE,
                 ).strip(" .,?!") or None
             return PlanStep(target=PlanTarget.TOOL, name="weather.current", payload={"location": location})
-        if "date" in value or ("day" in value and "today" in value):
+        if (
+            "date" in value
+            or ("day" in value and ("today" in value or "is it" in value))
+        ):
             return PlanStep(
                 target=PlanTarget.TOOL,
                 name="runtime.current_date",

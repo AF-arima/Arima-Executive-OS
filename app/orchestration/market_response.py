@@ -15,10 +15,26 @@ _CYRILLIC = re.compile(r"[\u0400-\u04ff]")
 _HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _TURKISH_MARKERS = re.compile(r"[çğıöşüÇĞİÖŞÜ]")
 _TURKISH_WORDS = {"sen", "kimsin", "nasıl", "nedir", "merhaba"}
+_REQUESTED_LANGUAGE_PHRASES = {
+    "fa": ("in persian", "in farsi", "persian language", "farsi language", "به فارسی"),
+    "ru": ("in russian", "russian language", "по-русски", "на русском"),
+    "en": ("in english", "english language", "на английском"),
+}
+
+
+def _requested_language(text: str) -> str | None:
+    normalized = " ".join(text.casefold().split())
+    for language, phrases in _REQUESTED_LANGUAGE_PHRASES.items():
+        if any(phrase in normalized for phrase in phrases):
+            return language
+    return None
 
 
 def detect_response_language(text: str) -> str:
     """Return the response language required by the user's current request."""
+    requested = _requested_language(text)
+    if requested is not None:
+        return requested
     words = set(re.findall(r"[\w\u0600-\u06ff]+", text.casefold()))
     if _PERSIAN_MARKERS.search(text) or words.intersection(_PERSIAN_WORDS):
         return "fa"
