@@ -10,6 +10,8 @@ from app.orchestration.schemas import (
     OrchestrationStage,
 )
 from app.orchestration.telemetry import InMemoryTelemetrySink
+from app.providers.providers.mock import MockProvider
+from app.voice.observability import VoiceExecutionObserver
 from tests.database.helpers import sqlite_session
 from tests.orchestration.helpers import make_context
 
@@ -49,6 +51,44 @@ def test_end_to_end_general_pipeline_streaming_telemetry_and_audit() -> None:
             assert await session.scalar(
                 select(func.count()).select_from(AuditLog)
             ) == 1
+
+    asyncio.run(scenario())
+
+
+def test_pipeline_preserves_voice_boundary_trace_for_provider() -> None:
+    async def scenario() -> None:
+        captured: dict[str, object] = {}
+        original_complete = MockProvider.complete
+
+        async def capture_request(self, request):
+            captured["metadata"] = request.metadata
+            return await original_complete(self, request)
+
+        MockProvider.complete = capture_request
+        try:
+            async with sqlite_session() as session:
+                engine = OrchestrationFactory(session).create()
+                trace: list[str] = []
+                observer = VoiceExecutionObserver(
+                    "00000000-0000-4000-8000-000000000001",
+                    "00000000-0000-4000-8000-000000000002",
+                    sink=lambda _event, _fields: None,
+                )
+                context = await make_context(
+                    session,
+                    OrchestrationRequest(
+                        content="Hello",
+                        metadata={
+                            "_voice_observer": observer,
+                            "_boundary_trace": trace,
+                        },
+                    ),
+                )
+                await engine.execute(context)
+        finally:
+            MockProvider.complete = original_complete
+
+        assert captured["metadata"]["_boundary_trace"] is trace
 
     asyncio.run(scenario())
 

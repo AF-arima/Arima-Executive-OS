@@ -215,6 +215,7 @@ class OrchestrationPipeline(HealthContract):
                         context.request.content
                     ),
                     "_voice_observer": observer,
+                    "_boundary_trace": trace,
                 }
             provider_attempt = 0
 
