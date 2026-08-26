@@ -158,6 +158,7 @@ class VoiceExecutionObserver:
         self.session_id = str(session_id)
         self.started = perf_counter()
         self.sink = sink or self._log
+        self.boundary_trace: list[str] | None = None
 
     def emit(
         self,

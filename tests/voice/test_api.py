@@ -189,9 +189,14 @@ def test_provider_timeout_returns_gateway_timeout(
 
     class TimeoutGateway:
         async def handle_transcript(
-            self, session_id, transcript, actor, correlation_id=None
+            self,
+            session_id,
+            transcript,
+            actor,
+            correlation_id=None,
+            boundary_trace=None,
         ):
-            del session_id, transcript, actor, correlation_id
+            del session_id, transcript, actor, correlation_id, boundary_trace
             raise VoiceExecutionTimeout("provider timed out")
 
     monkeypatch.setattr(
@@ -223,9 +228,14 @@ def test_provider_unavailability_returns_service_unavailable(
 
     class UnavailableGateway:
         async def handle_transcript(
-            self, session_id, transcript, actor, correlation_id=None
+            self,
+            session_id,
+            transcript,
+            actor,
+            correlation_id=None,
+            boundary_trace=None,
         ):
-            del session_id, transcript, actor, correlation_id
+            del session_id, transcript, actor, correlation_id, boundary_trace
             raise VoiceProviderUnavailable("provider unavailable")
 
     monkeypatch.setattr(

@@ -178,6 +178,9 @@ class OrchestrationPipeline(HealthContract):
                 content=self.provider_prompt.build(context, built),
             ),
         )
+        trace = context.request.metadata.get("_boundary_trace")
+        if isinstance(trace, list):
+            trace.append("D_FALLBACK_ENTRY")
         if self._native_tools_enabled(context):
             native_context = context.request.metadata.get(
                 "native_execution_context"

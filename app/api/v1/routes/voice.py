@@ -43,6 +43,10 @@ router = APIRouter(
 VoiceUser = Annotated[User, Depends(get_current_active_user)]
 
 
+def _boundary_trace_headers(trace: list[str]) -> dict[str, str]:
+    return {"X-Arima-Debug-Trace": ",".join(trace)}
+
+
 def gateway(database: SessionDependency):
     settings = get_settings()
     if not settings.arima_voice_enabled:
@@ -101,7 +105,9 @@ async def submit_voice_transcript(
     database: SessionDependency,
     actor: VoiceUser,
     request: Request,
+    response: Response,
 ) -> VoiceGatewayResponse:
+    boundary_trace: list[str] = []
     settings = get_settings()
     if len(data.transcript) > settings.arima_voice_max_transcript_length:
         raise HTTPException(
@@ -116,24 +122,51 @@ async def submit_voice_transcript(
     )
     voice_gateway = gateway(database)
     try:
-        return await voice_gateway.handle_transcript(
+        result = await voice_gateway.handle_transcript(
             session_id,
             data.transcript,
             actor,
             correlation_id=getattr(request.state, "correlation_id", None),
+            boundary_trace=boundary_trace,
         )
+        response.headers.update(_boundary_trace_headers(boundary_trace))
+        return result
     except VoiceSessionNotFound as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+        raise HTTPException(
+            status_code=404,
+            detail=str(error),
+            headers=_boundary_trace_headers(boundary_trace),
+        ) from error
     except VoiceSessionAccessDenied as error:
-        raise HTTPException(status_code=403, detail=str(error)) from error
+        raise HTTPException(
+            status_code=403,
+            detail=str(error),
+            headers=_boundary_trace_headers(boundary_trace),
+        ) from error
     except VoicePermissionDenied as error:
-        raise HTTPException(status_code=403, detail=str(error)) from error
+        raise HTTPException(
+            status_code=403,
+            detail=str(error),
+            headers=_boundary_trace_headers(boundary_trace),
+        ) from error
     except VoiceSessionBusy as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+        raise HTTPException(
+            status_code=409,
+            detail=str(error),
+            headers=_boundary_trace_headers(boundary_trace),
+        ) from error
     except VoiceExecutionTimeout as error:
-        raise HTTPException(status_code=504, detail=str(error)) from error
+        raise HTTPException(
+            status_code=504,
+            detail=str(error),
+            headers=_boundary_trace_headers(boundary_trace),
+        ) from error
     except VoiceProviderUnavailable as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
+        raise HTTPException(
+            status_code=503,
+            detail=str(error),
+            headers=_boundary_trace_headers(boundary_trace),
+        ) from error
 
 
 @router.post("/sessions/{session_id}/tts", response_class=Response)

@@ -183,10 +183,12 @@ def test_unknown_request_delegates_to_orchestration() -> None:
             session, _ = await gateway.create_session(
                 VoiceSessionCreate(), actor
             )
+            trace: list[str] = []
             response = await gateway.handle_transcript(
                 session.session_id,
                 "Analyse this strategic decision",
                 actor,
+                boundary_trace=trace,
             )
             assert engine.calls == 1
             assert response.response_text.startswith("Mock response:")
@@ -198,6 +200,12 @@ def test_unknown_request_delegates_to_orchestration() -> None:
                 event.type.value == "data_object_created"
                 for event in response.experience_events
             )
+            assert trace == [
+                "A_GATEWAY_ENTRY",
+                "B_ORCHESTRATION_ENTRY",
+                "C_ENGINE_ENTRY",
+                "D_FALLBACK_ENTRY",
+            ]
 
     asyncio.run(scenario())
 
@@ -214,15 +222,25 @@ def test_provider_timeout_is_bounded_and_marks_session_error() -> None:
                 VoiceSessionCreate(), actor
             )
             actor_id = actor.id
+            trace: list[str] = []
 
             with pytest.raises(VoiceExecutionTimeout, match="timed out"):
                 await gateway.handle_transcript(
-                    session.session_id, "Analyse this strategic decision", actor
+                    session.session_id,
+                    "Analyse this strategic decision",
+                    actor,
+                    boundary_trace=trace,
                 )
 
             failed = await gateway.sessions.get(session.session_id, actor_id)
             assert failed.state is VoiceState.ERROR
             assert not blocking_engine.release.is_set()
+            assert trace == [
+                "A_GATEWAY_ENTRY",
+                "B_ORCHESTRATION_ENTRY",
+                "C_ENGINE_ENTRY",
+                "G_OUTER_TIMEOUT",
+            ]
 
     asyncio.run(scenario())
 

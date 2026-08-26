@@ -156,8 +156,12 @@ class VoiceGateway:
         transcript: str,
         actor: User,
         correlation_id: str | UUID | None = None,
+        boundary_trace: list[str] | None = None,
     ) -> VoiceGatewayResponse:
+        if boundary_trace is not None:
+            boundary_trace.append("A_GATEWAY_ENTRY")
         observer = VoiceExecutionObserver(correlation_id, session_id)
+        observer.boundary_trace = boundary_trace
         observer.emit("voice_request_started", outcome="started")
         actor_id = actor.id
         session = await self.sessions.get(session_id, actor.id)
@@ -208,6 +212,8 @@ class VoiceGateway:
                     previous_response,
                     events,
                 )
+            if boundary_trace is not None:
+                boundary_trace.append("B_ORCHESTRATION_ENTRY")
             response = await self._orchestrate(
                 session, transcript, actor, events, observer
             )
@@ -387,6 +393,8 @@ class VoiceGateway:
                 timeout=self.execution_timeout_seconds,
             )
         except asyncio.TimeoutError as error:
+            if observer.boundary_trace is not None:
+                observer.boundary_trace.append("G_OUTER_TIMEOUT")
             logger.info(
                 "voice_orchestration_timeout",
                 extra={
@@ -441,6 +449,7 @@ class VoiceGateway:
         observer.emit("workspace_resolved", outcome="success")
         observer.emit("context_completed", outcome="success")
         context.request.metadata["execution_deadline_monotonic"] = deadline
+        context.request.metadata["_boundary_trace"] = observer.boundary_trace
         session = await self.sessions.update(
             session.session_id,
             actor.id,
@@ -465,6 +474,9 @@ class VoiceGateway:
             },
         )
         try:
+            trace = context.request.metadata.get("_boundary_trace")
+            if isinstance(trace, list):
+                trace.append("C_ENGINE_ENTRY")
             result = await self.orchestration.execute(context)
             logger.info(
                 "voice_orchestration_return",

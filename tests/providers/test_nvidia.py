@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 import json
 
 import httpx
@@ -26,6 +27,7 @@ from app.providers.types import (
     ProviderName,
     ProviderStatus,
 )
+from app.voice.observability import VoiceExecutionObserver
 
 VERIFIED_MODEL = "nvidia/nvidia-nemotron-nano-9b-v2"
 
@@ -201,6 +203,54 @@ def test_nvidia_chat_adapter_uses_verified_server_side_contract() -> None:
         assert result.usage.output_tokens == 5
         assert "reasoning_content" not in result.metadata
         assert "test-nvidia-token" not in repr(result)
+
+    asyncio.run(scenario())
+
+
+def test_nvidia_fake_boundary_preserves_observer_trace() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "Approved response."},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    async def scenario() -> None:
+        trace: list[str] = []
+        events: list[str] = []
+        observer = VoiceExecutionObserver(
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000002",
+            sink=lambda event, _: events.append(event),
+        )
+        metadata = {
+            **request().metadata,
+            "_voice_observer": observer,
+            "_boundary_trace": trace,
+        }
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            provider = NvidiaProvider(configuration(), client=client)
+            result = await provider.complete(
+                replace(request(), metadata=metadata)
+            )
+
+        assert result.content == "Approved response."
+        assert trace == ["E_PROVIDER_ENTRY", "F_PROVIDER_RETURN"]
+        assert events == [
+            "provider_attempt_start",
+            "provider_request_dispatched",
+            "provider_response_received",
+            "provider_attempt_success",
+        ]
 
     asyncio.run(scenario())
 

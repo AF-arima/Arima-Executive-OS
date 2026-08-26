@@ -129,6 +129,9 @@ class NvidiaProvider(ProviderAdapter):
         raw_attempt = request.metadata.get("provider_attempt")
         attempt = raw_attempt if isinstance(raw_attempt, int) else None
         started = perf_counter()
+        trace = request.metadata.get("_boundary_trace")
+        if isinstance(trace, list):
+            trace.append("E_PROVIDER_ENTRY")
         if observer is not None:
             observer.emit(
                 "provider_attempt_start",
@@ -203,6 +206,8 @@ class NvidiaProvider(ProviderAdapter):
                             )
                         ) if observer is not None else None,
                     )
+            if isinstance(trace, list):
+                trace.append("F_PROVIDER_RETURN")
             body = self._response_body(response)
             content, finish_reason, tool_calls = self._completion(body)
             usage = self._usage(body)
