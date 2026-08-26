@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
+from time import perf_counter
 from typing import Protocol
 from uuid import UUID
 
 from app.database.models import User
 from app.experience.mapper import ExperienceEventMapper
 from app.orchestration.context import OrchestrationExecutionContext
-from app.orchestration.exceptions import OrchestrationApprovalRequired
-from app.orchestration.exceptions import OrchestrationFallbackExhausted
+from app.orchestration.exceptions import (
+    OrchestrationApprovalRequired,
+    OrchestrationFallbackExhausted,
+)
+from app.orchestration.market_response import detect_response_language
+from app.orchestration.provider_prompt import ProviderPromptBuilder
 from app.orchestration.schemas import OrchestrationResult
 from app.services.permissions import user_roles
 from app.voice.commands import (
@@ -25,12 +30,10 @@ from app.voice.exceptions import (
     VoiceExecutionTimeout,
     VoicePermissionDenied,
     VoiceProviderUnavailable,
+    VoiceSessionBusy,
 )
-from app.voice.observability import VoiceExecutionObserver, normalized_failure_class
-from app.orchestration.market_response import detect_response_language
-from app.orchestration.provider_prompt import ProviderPromptBuilder
-from app.voice.exceptions import VoiceSessionBusy
 from app.voice.health import voice_health
+from app.voice.observability import VoiceExecutionObserver, normalized_failure_class
 from app.voice.schemas import (
     VoiceApprovalAction,
     VoiceCommand,
@@ -38,12 +41,14 @@ from app.voice.schemas import (
     VoiceGatewayResponse,
     VoiceNavigationAction,
     VoicePanelAction,
+    VoiceProviderProvenance,
     VoiceSession,
     VoiceSessionCreate,
-    VoiceProviderProvenance,
 )
 from app.voice.session import VoiceSessionStore
 from app.voice.state import VoiceState
+
+logger = logging.getLogger("arima.voice.execution")
 
 
 class SpeechToTextProvider(ABC):
@@ -382,6 +387,14 @@ class VoiceGateway:
                 timeout=self.execution_timeout_seconds,
             )
         except asyncio.TimeoutError as error:
+            logger.info(
+                "voice_orchestration_timeout",
+                extra={
+                    "correlation_id": observer.request_id,
+                    "voice_session_id": observer.session_id,
+                    "elapsed_ms": round((perf_counter() - observer.started) * 1000, 2),
+                },
+            )
             observer.emit(
                 "orchestration_deadline_exceeded",
                 outcome="timeout",
@@ -441,8 +454,27 @@ class VoiceGateway:
             request_mode=ProviderPromptBuilder.request_mode(transcript),
             response_language=detect_response_language(transcript),
         )
+        request_mode = ProviderPromptBuilder.request_mode(transcript)
+        logger.info(
+            "voice_orchestration_enter",
+            extra={
+                "correlation_id": observer.request_id,
+                "voice_session_id": observer.session_id,
+                "request_mode": request_mode,
+                "elapsed_ms": round((perf_counter() - observer.started) * 1000, 2),
+            },
+        )
         try:
             result = await self.orchestration.execute(context)
+            logger.info(
+                "voice_orchestration_return",
+                extra={
+                    "correlation_id": observer.request_id,
+                    "voice_session_id": observer.session_id,
+                    "request_mode": request_mode,
+                    "elapsed_ms": round((perf_counter() - observer.started) * 1000, 2),
+                },
+            )
         except OrchestrationFallbackExhausted as error:
             raise VoiceProviderUnavailable(
                 "Voice provider was unavailable during execution"
