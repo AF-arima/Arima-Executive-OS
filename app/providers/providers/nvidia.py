@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
+import asyncio
 import json
 import logging
 from time import perf_counter
@@ -39,6 +40,9 @@ from app.voice.observability import (
 )
 
 logger = logging.getLogger("arima.provider.execution")
+
+SAFETY_MARGIN_SECONDS = 2.0
+MIN_TIMEOUT_SECONDS = 5.0
 
 _POST_200_PARSE_FAILURE_REASONS = frozenset(
     {
@@ -87,6 +91,28 @@ class NvidiaProvider(ProviderAdapter):
             max_output_tokens=config.max_output_tokens,
             capabilities=config.capabilities,
         )
+
+    def _request_timeout(self, request: CompletionRequest) -> float:
+        deadline = request.metadata.get("execution_deadline_monotonic")
+        if not isinstance(deadline, (int, float)):
+            return self._timeout_seconds
+
+        remaining = deadline - asyncio.get_running_loop().time()
+        budget = remaining - SAFETY_MARGIN_SECONDS
+        if budget < MIN_TIMEOUT_SECONDS:
+            logger.warning(
+                "provider_timeout_budget_insufficient",
+                extra={
+                    "voice_session_id": (
+                        request.metadata.get("voice_session_id")
+                        if isinstance(request.metadata.get("voice_session_id"), str)
+                        else None
+                    ),
+                    "deadline_remaining_ms": round(max(remaining, 0) * 1000, 2),
+                },
+            )
+            raise ProviderTimeout("NVIDIA request timed out")
+        return min(budget, self._timeout_seconds)
 
     @property
     def provider(self) -> ProviderName:
@@ -187,6 +213,7 @@ class NvidiaProvider(ProviderAdapter):
                     self._client,
                     headers,
                     payload,
+                    timeout=self._request_timeout(request),
                     on_response=(
                         lambda raw: observer.emit(
                             "provider_response_received",
@@ -210,6 +237,7 @@ class NvidiaProvider(ProviderAdapter):
                         client,
                         headers,
                         payload,
+                        timeout=self._request_timeout(request),
                         on_response=(
                             lambda raw: observer.emit(
                                 "provider_response_received",
@@ -444,6 +472,7 @@ class NvidiaProvider(ProviderAdapter):
         client: httpx.AsyncClient,
         headers: Mapping[str, str],
         payload: Mapping[str, object],
+        timeout: float | None = None,
         on_response: Any = None,
     ) -> httpx.Response:
         try:
@@ -451,6 +480,7 @@ class NvidiaProvider(ProviderAdapter):
                 self.api_url,
                 headers=headers,
                 json=payload,
+                timeout=timeout,
             )
         except httpx.TimeoutException as error:
             raise ProviderTimeout("NVIDIA request timed out") from error

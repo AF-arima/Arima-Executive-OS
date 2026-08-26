@@ -216,6 +216,7 @@ class OrchestrationPipeline(HealthContract):
                     ),
                     "_voice_observer": observer,
                     "_boundary_trace": trace,
+                    "execution_deadline_monotonic": context.execution_deadline,
                 }
             provider_attempt = 0
 

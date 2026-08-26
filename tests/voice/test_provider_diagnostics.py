@@ -7,6 +7,7 @@ import pytest
 from pydantic import SecretStr
 
 from app.orchestration.fallback import OrchestrationFallback
+from app.orchestration.exceptions import OrchestrationFallbackExhausted
 from app.orchestration.policy import OrchestrationPolicy
 from app.providers.config import ProviderConfig
 from app.providers.exceptions import (
@@ -27,6 +28,21 @@ from app.voice.observability import (
     VoiceExecutionObserver,
     normalized_failure_class,
 )
+
+
+def _nvidia_provider(client: httpx.AsyncClient | None = None) -> NvidiaProvider:
+    return NvidiaProvider(
+        ProviderConfig(
+            provider=ProviderName.NVIDIA,
+            default_model="safe-model",
+            max_model_tokens=1_024,
+            default_temperature=0.2,
+            max_output_tokens=128,
+            api_key=SecretStr("secret-token"),
+            capabilities=ProviderCapabilities(),
+        ),
+        client=client,
+    )
 
 
 @pytest.mark.parametrize(
@@ -109,6 +125,145 @@ def test_fallback_emits_failure_and_exhaustion_without_private_detail() -> None:
     assert "fallback_exhausted" in names
     assert all("secret provider response" not in repr(payload) for _, payload in events)
     assert all(payload["correlation_id"] == observer.request_id for _, payload in events)
+
+
+def test_request_timeout_uses_remaining_deadline_and_shared_clock() -> None:
+    provider = _nvidia_provider()
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        request = CompletionRequest(
+            model="safe-model",
+            messages=(ProviderMessage(role=MessageRole.USER, content="safe"),),
+            metadata={"execution_deadline_monotonic": loop.time() + 20},
+        )
+        timeout = provider._request_timeout(request)
+        assert 17.0 < timeout <= 18.0
+
+    asyncio.run(scenario())
+
+
+def test_insufficient_budget_fails_before_http_and_logs_safe_warning(caplog: pytest.LogCaptureFixture) -> None:
+    provider = _nvidia_provider()
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        request = CompletionRequest(
+            model="safe-model",
+            messages=(ProviderMessage(role=MessageRole.USER, content="safe"),),
+            metadata={
+                "execution_deadline_monotonic": loop.time() + 4,
+                "voice_session_id": "safe-session",
+            },
+        )
+        with pytest.raises(ProviderTimeout):
+            provider._request_timeout(request)
+
+    with caplog.at_level("WARNING", logger="arima.provider.execution"):
+        asyncio.run(scenario())
+    record = next(record for record in caplog.records if record.levelname == "WARNING")
+    assert record.voice_session_id == "safe-session"
+    assert 0 < record.deadline_remaining_ms < 4_000
+
+
+def test_preemptive_and_in_request_provider_timeout_follow_same_fallback_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def run(
+        request: CompletionRequest,
+        provider: NvidiaProvider,
+    ) -> list[tuple[str, dict[str, object]]]:
+        events: list[tuple[str, dict[str, object]]] = []
+        observer = VoiceExecutionObserver(
+            None,
+            "safe-session",
+            sink=lambda event, payload: events.append((event, payload)),
+        )
+        request.metadata["_voice_observer"] = observer
+
+        async def operation() -> None:
+            request.metadata["provider_attempt"] = int(
+                request.metadata.get("provider_attempt", 0)
+            ) + 1
+            await provider.complete(request)
+
+        with pytest.raises(OrchestrationFallbackExhausted):
+            await OrchestrationFallback(
+                OrchestrationPolicy(maximum_retries=1)
+            ).retry(operation, observer=observer.emit, provider_name="nvidia")
+        return events
+
+    async def scenario() -> None:
+        preemptive_posts = 0
+
+        async def preemptive_handler(_: httpx.Request) -> httpx.Response:
+            nonlocal preemptive_posts
+            preemptive_posts += 1
+            return httpx.Response(200, json={})
+
+        preemptive_request = CompletionRequest(
+            model="safe-model",
+            messages=(ProviderMessage(role=MessageRole.USER, content="safe"),),
+            metadata={
+                "execution_deadline_monotonic": asyncio.get_running_loop().time() + 4,
+                "provider_attempt": 0,
+            },
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(preemptive_handler)
+        ) as preemptive_client:
+            preemptive_events = await run(
+                preemptive_request, _nvidia_provider(preemptive_client)
+            )
+
+        in_request_posts = 0
+
+        async def in_request_handler(_: httpx.Request) -> httpx.Response:
+            nonlocal in_request_posts
+            in_request_posts += 1
+            raise httpx.ReadTimeout("transport timeout")
+
+        in_request_request = CompletionRequest(
+            model="safe-model",
+            messages=(ProviderMessage(role=MessageRole.USER, content="safe"),),
+            metadata={"provider_attempt": 0},
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(in_request_handler)
+        ) as in_request_client:
+            in_request_events = await run(
+                in_request_request, _nvidia_provider(in_request_client)
+            )
+
+        def comparable(
+            events: list[tuple[str, dict[str, object]]],
+        ) -> list[tuple[str, object, object, object, object]]:
+            return [
+                (
+                    event,
+                    payload.get("attempt"),
+                    payload.get("outcome"),
+                    payload.get("failure_class"),
+                    payload.get("exception_type"),
+                )
+                for event, payload in events
+            ]
+
+        assert comparable(preemptive_events) == comparable(in_request_events)
+        assert preemptive_posts == 0
+        assert in_request_posts == 2
+        assert all("transport timeout" not in repr(payload) for _, payload in in_request_events)
+
+    with caplog.at_level("WARNING", logger="arima.provider.execution"):
+        asyncio.run(scenario())
+    warnings = [
+        record
+        for record in caplog.records
+        if record.name == "arima.provider.execution"
+        and record.message == "provider_timeout_budget_insufficient"
+    ]
+    assert len(warnings) == 2
+
 
 
 def test_nvidia_boundary_emits_correlated_lifecycle_events() -> None:
