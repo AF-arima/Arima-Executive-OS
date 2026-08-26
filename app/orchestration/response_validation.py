@@ -54,6 +54,7 @@ class ResponseValidator:
         content: str,
         *,
         allowed_evidence_ids: frozenset[str],
+        request_mode: str = "evidence_backed",
     ) -> ValidatedResponse:
         value = content.strip()
         if not value or len(value) > _MAX_RESPONSE_LENGTH:
@@ -64,7 +65,11 @@ class ResponseValidator:
             return self._fallback("internal_response")
         if _ACTION_CLAIM.search(value) or _ACTION_DIRECTIVE.search(value):
             return self._fallback("action_claim")
-        if _STATE_CLAIM.search(value) and not _UNAVAILABLE.search(value):
+        if (
+            request_mode != "conversation"
+            and _STATE_CLAIM.search(value)
+            and not _UNAVAILABLE.search(value)
+        ):
             cited = frozenset(re.findall(r"\[evidence:([^\]]+)\]", value))
             if not cited.intersection(allowed_evidence_ids):
                 return self._fallback("unsupported_state_claim")

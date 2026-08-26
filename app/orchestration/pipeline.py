@@ -224,6 +224,7 @@ class OrchestrationPipeline(HealthContract):
                 str(item)
                 for item in context.request.metadata.get("evidence_ids", [])
             ),
+            request_mode=self.provider_prompt.request_mode(context.request.content),
         )
         deterministic_market_response = market_response(
             actions, language=detect_response_language(context.request.content)
@@ -235,6 +236,7 @@ class OrchestrationPipeline(HealthContract):
                     str(item)
                     for item in context.request.metadata.get("evidence_ids", [])
                 ),
+                request_mode="market",
             )
         tool_actions = [
             action
