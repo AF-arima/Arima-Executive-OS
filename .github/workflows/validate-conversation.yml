@@ -2,6 +2,9 @@ name: Validate multilingual conversation routing
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - fix/multilingual-conversation
 
 jobs:
   validate:
