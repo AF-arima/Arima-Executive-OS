@@ -90,7 +90,7 @@ def test_provider_prompt_allowlists_authorised_context_and_excludes_secrets() ->
     asyncio.run(scenario())
 
 
-def test_pipeline_sends_only_static_instructions_and_canonical_projection() -> None:
+def test_pipeline_sends_language_instructions_and_canonical_projection() -> None:
     async def scenario() -> None:
         async with sqlite_session() as session:
             context = await make_context(
@@ -119,7 +119,9 @@ def test_pipeline_sends_only_static_instructions_and_canonical_projection() -> N
             assert call is not None
             request = cast(CompletionRequest, call.args[0])
             assert len(request.messages) == 2
-            assert request.messages[0].content == ProviderPromptBuilder.system_instructions
+            assert request.messages[0].content == ProviderPromptBuilder.system_instructions_for(
+                "Summarise the approved decision."
+            )
             assert request.messages[1].content == json.dumps(
                 {
                     "evidence": [
