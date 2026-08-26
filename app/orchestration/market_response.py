@@ -6,12 +6,33 @@ from typing import Any
 
 from app.orchestration.schemas import ExecutedAction
 
-_PERSIAN = re.compile(r"[\u0600-\u06ff]")
+_ARABIC_SCRIPT = re.compile(r"[\u0600-\u06ff]")
+_PERSIAN_MARKERS = re.compile(r"[\u067e\u0686\u0698\u06af]")
+_PERSIAN_WORDS = {"سلام", "تو", "کی", "هستی", "فارسی", "چطور", "ممنون", "خوبی"}
+_ARABIC_WORDS = {"مرحبا", "أنت", "انت", "كيف", "هذا"}
+_ARABIC_MARKERS = re.compile(r"[أإآةى]")
+_CYRILLIC = re.compile(r"[\u0400-\u04ff]")
+_HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_TURKISH_MARKERS = re.compile(r"[çğıöşüÇĞİÖŞÜ]")
+_TURKISH_WORDS = {"sen", "kimsin", "nasıl", "nedir", "merhaba"}
 
 
 def detect_response_language(text: str) -> str:
     """Return the response language required by the user's current request."""
-    return "fa" if _PERSIAN.search(text) else "en"
+    words = set(re.findall(r"[\w\u0600-\u06ff]+", text.casefold()))
+    if _PERSIAN_MARKERS.search(text) or words.intersection(_PERSIAN_WORDS):
+        return "fa"
+    if _ARABIC_SCRIPT.search(text) and (
+        words.intersection(_ARABIC_WORDS) or _ARABIC_MARKERS.search(text)
+    ):
+        return "ar"
+    if _HAN.search(text):
+        return "zh"
+    if _CYRILLIC.search(text):
+        return "ru"
+    if _TURKISH_MARKERS.search(text) or words.intersection(_TURKISH_WORDS):
+        return "tr"
+    return "en"
 
 
 def market_response(
