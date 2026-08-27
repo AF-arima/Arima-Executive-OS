@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
@@ -40,6 +41,7 @@ router = APIRouter(
     tags=["voice"],
     responses=AUTHENTICATED_RESPONSES,
 )
+logger = logging.getLogger("arima.request")
 VoiceUser = Annotated[User, Depends(get_current_active_user)]
 
 
@@ -108,6 +110,14 @@ async def submit_voice_transcript(
     response: Response,
 ) -> VoiceGatewayResponse:
     boundary_trace: list[str] = []
+    logger.info(
+        "voice_transcript_route_entry",
+        extra={
+            "event": "voice_transcript_route_entry",
+            "session_id": str(session_id),
+            "actor_id": str(actor.id),
+        },
+    )
     settings = get_settings()
     if len(data.transcript) > settings.arima_voice_max_transcript_length:
         raise HTTPException(
@@ -119,6 +129,7 @@ async def submit_voice_transcript(
         key=str(actor.id),
         limit=settings.voice_transcript_rate_limit_per_minute,
         window=timedelta(minutes=1),
+        session_id=str(session_id),
     )
     voice_gateway = gateway(database)
     try:
