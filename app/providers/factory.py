@@ -10,6 +10,7 @@ from app.providers.exceptions import (
 from app.providers.providers import (
     AnthropicProvider,
     DeepSeekProvider,
+    GroqProvider,
     GeminiProvider,
     MockProvider,
     NvidiaProvider,
@@ -40,6 +41,7 @@ class ProviderFactory:
             ProviderName.GEMINI: self._build_gemini,
             ProviderName.NVIDIA: NvidiaProvider,
             ProviderName.DEEPSEEK: DeepSeekProvider,
+            ProviderName.GROQ: GroqProvider,
             ProviderName.OLLAMA: OllamaProvider,
         }
         if builders:

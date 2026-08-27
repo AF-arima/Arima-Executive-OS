@@ -12,6 +12,7 @@ class ProviderName(str, Enum):
     GEMINI = "gemini"
     NVIDIA = "nvidia"
     DEEPSEEK = "deepseek"
+    GROQ = "groq"
     OLLAMA = "ollama"
 
 

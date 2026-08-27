@@ -13,6 +13,7 @@ from app.providers.factory import ProviderFactory
 from app.providers.providers import (
     AnthropicProvider,
     DeepSeekProvider,
+    GroqProvider,
     GeminiProvider,
     MockProvider,
     NvidiaProvider,
@@ -50,6 +51,7 @@ __all__ = [
     "EstimatedCost",
     "GeminiProvider",
     "DeepSeekProvider",
+    "GroqProvider",
     "InvalidModel",
     "MessageRole",
     "MockProvider",

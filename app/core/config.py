@@ -195,6 +195,12 @@ class Settings(BaseSettings):
         min_length=1,
         max_length=200,
     )
+    groq_api_key: SecretStr | None = None
+    groq_model: str = Field(
+        default="openai/gpt-oss-20b",
+        min_length=1,
+        max_length=200,
+    )
     ollama_url: str = "http://localhost:11434"
     default_provider: Literal[
         "mock",
@@ -203,6 +209,7 @@ class Settings(BaseSettings):
         "gemini",
         "nvidia",
         "deepseek",
+        "groq",
         "ollama",
     ] = "mock"
     default_model: str = Field(
@@ -455,6 +462,7 @@ class Settings(BaseSettings):
                 "gemini": self.gemini_api_key,
                 "nvidia": self.nvidia_api_key,
                 "deepseek": self.deepseek_api_key,
+                "groq": self.groq_api_key,
             }
             credential = provider_credentials.get(self.default_provider)
             if (

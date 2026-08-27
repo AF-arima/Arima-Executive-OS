@@ -37,6 +37,8 @@ def configured_provider_provenance(
         ProviderName.ANTHROPIC: settings.anthropic_api_key,
         ProviderName.GEMINI: settings.gemini_api_key,
         ProviderName.NVIDIA: settings.nvidia_api_key,
+        ProviderName.DEEPSEEK: settings.deepseek_api_key,
+        ProviderName.GROQ: settings.groq_api_key,
     }
     credential = credentials.get(provider)
     return (

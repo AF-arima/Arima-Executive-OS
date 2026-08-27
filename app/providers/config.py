@@ -111,6 +111,16 @@ class ProviderPlatformConfig:
                     json_mode=True,
                 ),
             ),
+            ProviderName.GROQ: build(
+                ProviderName.GROQ,
+                model=settings.groq_model,
+                api_key=settings.groq_api_key,
+                base_url="https://api.groq.com/openai/v1",
+                capabilities=ProviderCapabilities(
+                    tools=True,
+                    json_mode=True,
+                ),
+            ),
             ProviderName.OLLAMA: build(
                 ProviderName.OLLAMA,
                 base_url=settings.ollama_url,
