@@ -92,7 +92,9 @@ def _groq_failure_details(
     elif safe_status is not None and 500 <= safe_status <= 599:
         failure_class = "server_error"
     else:
-        existing_class = failure.get("failure_class")
+        existing_class = failure.get("safe_failure_category") or failure.get(
+            "failure_class"
+        )
         failure_class = {
             "provider_auth_error": "provider_error",
             "provider_rate_limit": "rate_limited",

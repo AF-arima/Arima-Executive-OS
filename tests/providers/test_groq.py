@@ -123,15 +123,23 @@ def test_groq_maps_json_mode_and_tool_calls() -> None:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("status", [400, 500, 502, 503, 504])
+@pytest.mark.parametrize("status", [400, 404, 500, 502, 503, 504])
 def test_groq_http_errors_are_normalized(status: int) -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(status)
 
     async def scenario() -> None:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with pytest.raises(ProviderUnavailable):
+            with pytest.raises(ProviderUnavailable) as caught:
                 await GroqProvider(config(), client=client).complete(request())
+            assert caught.value.status_code == status
+            assert caught.value.safe_failure_category == (
+                "bad_request"
+                if status == 400
+                else "not_found"
+                if status == 404
+                else "server_error"
+            )
 
     asyncio.run(scenario())
 
@@ -143,8 +151,12 @@ def test_groq_auth_errors_are_normalized(status: int) -> None:
 
     async def scenario() -> None:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with pytest.raises(AuthenticationFailure):
+            with pytest.raises(AuthenticationFailure) as caught:
                 await GroqProvider(config(), client=client).complete(request())
+            assert caught.value.status_code == status
+            assert caught.value.safe_failure_category == (
+                "unauthorized" if status == 401 else "forbidden"
+            )
 
     asyncio.run(scenario())
 
@@ -161,14 +173,34 @@ def test_groq_rate_limit_and_timeout_are_normalized() -> None:
 
     async def scenario() -> None:
         async with httpx.AsyncClient(transport=httpx.MockTransport(rate_handler)) as client:
-            with pytest.raises(RateLimitExceeded):
+            with pytest.raises(RateLimitExceeded) as caught:
                 await GroqProvider(config(), client=client).complete(request())
+            assert caught.value.status_code == 429
+            assert caught.value.safe_failure_category == "rate_limited"
         async with httpx.AsyncClient(transport=httpx.MockTransport(timeout_handler)) as client:
-            with pytest.raises(ProviderTimeout):
+            with pytest.raises(ProviderTimeout) as caught:
                 await GroqProvider(config(), client=client).complete(request())
+            assert caught.value.status_code is None
+            assert caught.value.safe_failure_category == "timeout"
         async with httpx.AsyncClient(transport=httpx.MockTransport(status_timeout_handler)) as client:
-            with pytest.raises(ProviderTimeout):
+            with pytest.raises(ProviderTimeout) as caught:
                 await GroqProvider(config(), client=client).complete(request())
+            assert caught.value.status_code == 408
+            assert caught.value.safe_failure_category == "timeout"
+
+    asyncio.run(scenario())
+
+
+def test_groq_transport_error_preserves_safe_category() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("secret transport detail")
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(ProviderUnavailable) as caught:
+                await GroqProvider(config(), client=client).complete(request())
+            assert caught.value.status_code is None
+            assert caught.value.safe_failure_category == "transport_error"
 
     asyncio.run(scenario())
 
@@ -188,8 +220,10 @@ def test_groq_parser_fails_closed(response_body: dict[str, object]) -> None:
 
     async def scenario() -> None:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with pytest.raises(ProviderUnavailable):
+            with pytest.raises(ProviderUnavailable) as caught:
                 await GroqProvider(config(), client=client).complete(request())
+            assert caught.value.status_code is None
+            assert caught.value.safe_failure_category == "parser_error"
 
     asyncio.run(scenario())
 
