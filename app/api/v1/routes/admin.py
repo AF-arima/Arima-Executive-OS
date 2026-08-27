@@ -46,6 +46,78 @@ SessionDependency = Annotated[AsyncSession, Depends(get_session)]
 PlatformOperator = Annotated[User, Depends(require_platform_operator)]
 FounderControlUser = Annotated[User, Depends(require_founder_control)]
 
+_GROQ_FAILURE_CATEGORIES = frozenset(
+    {
+        "unauthorized",
+        "forbidden",
+        "not_found",
+        "rate_limited",
+        "bad_request",
+        "server_error",
+        "timeout",
+        "transport_error",
+        "provider_error",
+        "parser_error",
+        "unknown",
+    }
+)
+
+
+def _groq_failure_details(
+    failure: dict[str, object],
+    error: BaseException,
+) -> dict[str, object | None]:
+    status_code = failure.get("status_code")
+    safe_status = (
+        status_code
+        if (
+            isinstance(status_code, int)
+            and not isinstance(status_code, bool)
+            and 100 <= status_code <= 599
+        )
+        else None
+    )
+    if safe_status == 401:
+        failure_class = "unauthorized"
+    elif safe_status == 403:
+        failure_class = "forbidden"
+    elif safe_status == 404:
+        failure_class = "not_found"
+    elif safe_status == 429:
+        failure_class = "rate_limited"
+    elif safe_status == 408:
+        failure_class = "timeout"
+    elif safe_status is not None and 400 <= safe_status <= 499:
+        failure_class = "bad_request"
+    elif safe_status is not None and 500 <= safe_status <= 599:
+        failure_class = "server_error"
+    else:
+        existing_class = failure.get("failure_class")
+        failure_class = {
+            "provider_auth_error": "provider_error",
+            "provider_rate_limit": "rate_limited",
+            "provider_timeout": "timeout",
+            "provider_connection_error": "transport_error",
+            "provider_http_error": "provider_error",
+            "provider_unavailable": "provider_error",
+        }.get(existing_class, existing_class)
+        if failure_class not in _GROQ_FAILURE_CATEGORIES:
+            failure_class = {
+                "ProviderTimeout": "timeout",
+                "RateLimitExceeded": "rate_limited",
+                "AuthenticationFailure": "provider_error",
+            }.get(type(error).__name__, "unknown")
+    exception_type = failure.get("exception_type")
+    if exception_type not in _GROQ_FAILURE_CATEGORIES:
+        exception_type = failure_class
+    if exception_type not in _GROQ_FAILURE_CATEGORIES:
+        exception_type = "unknown"
+    return {
+        "http_status": safe_status,
+        "exception_type": exception_type,
+        "failure_class": failure_class,
+    }
+
 
 @router.post(
     "/users/{user_id}/roles",
@@ -169,6 +241,7 @@ async def founder_groq_smoke_test(
             ),
             {},
         )
+        failure_details = _groq_failure_details(failure, error)
         return GroqSmokeTestResponse(
             success=False,
             http_status_category=(
@@ -185,6 +258,7 @@ async def founder_groq_smoke_test(
                 if isinstance(failure.get("failure_class"), str)
                 else normalized_failure_class(error)
             ),
+            **failure_details,
         )
     elapsed_ms = round((perf_counter() - started) * 1000, 2)
     response_event = next(

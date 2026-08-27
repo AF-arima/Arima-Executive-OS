@@ -40,6 +40,23 @@ class FounderSystemHealth(StrictSchema):
     components: list[FounderHealthComponent]
 
 
+GroqFailureCategory = Literal[
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "rate_limited",
+    "bad_request",
+    "server_error",
+    "timeout",
+    "transport_error",
+    "provider_error",
+    "parser_error",
+    "unknown",
+]
+
+GroqExceptionType = GroqFailureCategory
+
+
 class GroqSmokeTestResponse(StrictSchema):
     success: bool
     provider: Literal["groq"] = "groq"
@@ -50,6 +67,9 @@ class GroqSmokeTestResponse(StrictSchema):
     completion_matches: bool
     telemetry: Literal["pass", "fail"]
     error: str | None = None
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    exception_type: GroqExceptionType | None = None
+    failure_class: GroqFailureCategory | None = None
 
 
 class FounderFeedError(StrictSchema):

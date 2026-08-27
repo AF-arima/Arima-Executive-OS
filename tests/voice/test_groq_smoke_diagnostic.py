@@ -4,6 +4,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from app.api.v1.routes.admin import _groq_failure_details
 from app.core.config import get_settings
 from app.providers import ProviderName
 from app.providers.exceptions import ProviderUnavailable
@@ -104,6 +105,9 @@ def test_groq_smoke_uses_fixed_request_once_and_returns_sanitized_success(
         "completion_matches": True,
         "telemetry": "pass",
         "error": None,
+        "http_status": None,
+        "exception_type": None,
+        "failure_class": None,
     }
     assert observed == {
         "calls": 1,
@@ -158,3 +162,50 @@ def test_groq_smoke_sanitizes_provider_failure_without_retry(
     assert calls == 1
     assert "secret provider response" not in response.text
     assert "ProviderUnavailable" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected"),
+    [
+        (401, "unauthorized"),
+        (403, "forbidden"),
+        (404, "not_found"),
+        (429, "rate_limited"),
+        (500, "server_error"),
+    ],
+)
+def test_groq_smoke_maps_safe_http_failure_categories(
+    status_code: int,
+    expected: str,
+) -> None:
+    details = _groq_failure_details(
+        {"status_code": status_code, "failure_class": "provider_unavailable"},
+        ProviderUnavailable("secret"),
+    )
+    assert details == {
+        "http_status": status_code,
+        "exception_type": expected,
+        "failure_class": expected,
+    }
+
+
+@pytest.mark.parametrize(
+    ("failure_class", "expected"),
+    [
+        ("provider_timeout", "timeout"),
+        ("provider_connection_error", "transport_error"),
+        ("parser_error", "parser_error"),
+        ("unrecognized", "unknown"),
+    ],
+)
+def test_groq_smoke_maps_safe_non_http_failure_categories(
+    failure_class: str,
+    expected: str,
+) -> None:
+    details = _groq_failure_details(
+        {"failure_class": failure_class, "exception_type": "untrusted"},
+        ProviderUnavailable("secret message"),
+    )
+    assert details["http_status"] is None
+    assert details["failure_class"] == expected
+    assert details["exception_type"] == expected
