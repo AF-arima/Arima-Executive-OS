@@ -1,31 +1,38 @@
 import logging
+from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies import AUTHENTICATED_RESPONSES, SessionDependency
-from app.auth.dependencies import get_current_active_user
+from app.auth.dependencies import (
+    get_current_active_user,
+    get_current_user,
+    oauth2_scheme,
+)
 from app.auth.security import SecurityRateLimiter
 from app.core.config import get_settings
 from app.database.models import User
+from app.database.session import get_session
 from app.voice.exceptions import (
-    VoicePermissionDenied,
     VoiceExecutionTimeout,
+    VoicePermissionDenied,
     VoiceProviderUnavailable,
-    VoiceSessionBusy,
     VoiceSessionAccessDenied,
+    VoiceSessionBusy,
     VoiceSessionNotFound,
 )
 from app.voice.factory import VoiceGatewayFactory
 from app.voice.schemas import (
+    TextToSpeechInput,
     VoiceGatewayResponse,
     VoiceHealth,
     VoiceSession,
     VoiceSessionCreate,
     VoiceTranscriptInput,
-    TextToSpeechInput,
 )
 from app.voice.tts import (
     TTSNotConfigured,
@@ -42,7 +49,116 @@ router = APIRouter(
     responses=AUTHENTICATED_RESPONSES,
 )
 logger = logging.getLogger("arima.request")
+
+_PRE_HANDLER_EVENTS = frozenset(
+    {
+        "dependency_resolution_start",
+        "session_dependency_success",
+        "session_dependency_failure",
+        "voice_auth_success",
+        "voice_auth_failure",
+        "db_session_success",
+        "db_session_failure",
+        "rate_limit_dependency_success",
+        "rate_limit_dependency_failure",
+        "route_handler_entry",
+    }
+)
+_SAFE_EXCEPTION_TYPES = frozenset(
+    {
+        "AccountLockedError",
+        "CsrfValidationError",
+        "EmailNotVerifiedError",
+        "InactiveUserError",
+        "InvalidTokenError",
+        "MFARequiredError",
+        "RateLimitExceededError",
+        "SQLAlchemyError",
+    }
+)
+
+
+def _safe_exception_type(error: BaseException) -> str:
+    exception_type = type(error).__name__
+    return exception_type if exception_type in _SAFE_EXCEPTION_TYPES else "unknown"
+
+
+def _emit_pre_handler_event(
+    event: str,
+    request: Request,
+    session_id: UUID,
+    *,
+    error: BaseException | None = None,
+) -> None:
+    if event not in _PRE_HANDLER_EVENTS:
+        raise ValueError("Unsupported pre-handler diagnostic event")
+    payload: dict[str, object] = {
+        "event": event,
+        "session_id": str(session_id),
+        "correlation_id": getattr(request.state, "correlation_id", None),
+    }
+    if error is not None:
+        payload["exception_type"] = _safe_exception_type(error)
+    logger.info(event, extra=payload)
+
+
+async def _trace_dependency_resolution_start(
+    request: Request,
+    session_id: UUID,
+) -> None:
+    _emit_pre_handler_event("dependency_resolution_start", request, session_id)
+
+
+async def _trace_voice_database(
+    request: Request,
+    session_id: UUID,
+) -> AsyncIterator[AsyncSession]:
+    session_dependency = request.app.dependency_overrides.get(
+        get_session,
+        get_session,
+    )
+    try:
+        async for session in session_dependency():
+            _emit_pre_handler_event("session_dependency_success", request, session_id)
+            _emit_pre_handler_event("db_session_success", request, session_id)
+            yield session
+    except Exception as error:
+        _emit_pre_handler_event(
+            "session_dependency_failure",
+            request,
+            session_id,
+            error=error,
+        )
+        _emit_pre_handler_event(
+            "db_session_failure",
+            request,
+            session_id,
+            error=error,
+        )
+        raise
+
+
+VoiceDatabase = Annotated[AsyncSession, Depends(_trace_voice_database)]
+
+
+async def _trace_voice_user(
+    request: Request,
+    session_id: UUID,
+    database: VoiceDatabase,
+    token: Annotated[str, Depends(oauth2_scheme)],
+) -> User:
+    try:
+        current_user = await get_current_user(database, token)
+        user = await get_current_active_user(current_user)
+    except Exception as error:
+        _emit_pre_handler_event("voice_auth_failure", request, session_id, error=error)
+        raise
+    _emit_pre_handler_event("voice_auth_success", request, session_id)
+    return user
+
+
 VoiceUser = Annotated[User, Depends(get_current_active_user)]
+TranscriptVoiceUser = Annotated[User, Depends(_trace_voice_user)]
 
 
 def _boundary_trace_headers(trace: list[str]) -> dict[str, str]:
@@ -100,16 +216,18 @@ async def get_voice_session(
 @router.post(
     "/sessions/{session_id}/transcript",
     response_model=VoiceGatewayResponse,
+    dependencies=[Depends(_trace_dependency_resolution_start)],
 )
 async def submit_voice_transcript(
     session_id: UUID,
     data: VoiceTranscriptInput,
-    database: SessionDependency,
-    actor: VoiceUser,
+    database: VoiceDatabase,
+    actor: TranscriptVoiceUser,
     request: Request,
     response: Response,
 ) -> VoiceGatewayResponse:
     boundary_trace: list[str] = []
+    _emit_pre_handler_event("route_handler_entry", request, session_id)
     logger.info(
         "voice_transcript_route_entry",
         extra={
@@ -124,13 +242,20 @@ async def submit_voice_transcript(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Transcript exceeds configured maximum length",
         )
-    await SecurityRateLimiter(database).enforce(
-        scope="voice_transcript",
-        key=str(actor.id),
-        limit=settings.voice_transcript_rate_limit_per_minute,
-        window=timedelta(minutes=1),
-        session_id=str(session_id),
-    )
+    try:
+        await SecurityRateLimiter(database).enforce(
+            scope="voice_transcript",
+            key=str(actor.id),
+            limit=settings.voice_transcript_rate_limit_per_minute,
+            window=timedelta(minutes=1),
+            session_id=str(session_id),
+        )
+    except Exception as error:
+        _emit_pre_handler_event(
+            "rate_limit_dependency_failure", request, session_id, error=error
+        )
+        raise
+    _emit_pre_handler_event("rate_limit_dependency_success", request, session_id)
     voice_gateway = gateway(database)
     try:
         result = await voice_gateway.handle_transcript(
