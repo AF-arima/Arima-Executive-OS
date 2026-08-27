@@ -156,12 +156,15 @@ class GroqProvider(ProviderAdapter):
                 )
             try:
                 body = self._response_body(response)
+                response_shape = self._response_shape(body)
                 content, finish_reason, tool_calls = self._completion(body)
                 usage = self._usage(body)
-            except ProviderUnavailable:
+            except ProviderUnavailable as error:
+                error.response_shape = locals().get("response_shape")  # type: ignore[attr-defined]
                 raise
             except Exception as error:
                 self._annotate_parser_failure(error, "unknown", "exception")
+                error.response_shape = locals().get("response_shape")  # type: ignore[attr-defined]
                 raise
             try:
                 result = CompletionResponse(
@@ -184,6 +187,7 @@ class GroqProvider(ProviderAdapter):
                     provider=self.provider.value,
                     outcome="success",
                     duration_ms=round((perf_counter() - started) * 1000, 2),
+                    response_shape=response_shape,
                     **diagnostics,
                 )
             return result
@@ -204,6 +208,7 @@ class GroqProvider(ProviderAdapter):
                     status_category=http_status_category(getattr(error, "status_code", None)),
                     parser_failure_stage=getattr(error, "parser_failure_stage", None),
                     parser_failure_detail=getattr(error, "parser_failure_detail", None),
+                    response_shape=getattr(error, "response_shape", None),
                     **diagnostics,
                 )
             raise
@@ -263,6 +268,48 @@ class GroqProvider(ProviderAdapter):
             parser_failure_stage=stage,
             parser_failure_detail=detail,
         )
+
+    @staticmethod
+    def _response_shape(body: Mapping[str, Any]) -> dict[str, object]:
+        choices = body.get("choices")
+        choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
+        message = choice.get("message") if isinstance(choice, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        reasoning = message.get("reasoning") if isinstance(message, dict) else None
+        tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        if finish_reason is None:
+            safe_finish_reason = "missing"
+        elif isinstance(finish_reason, str) and finish_reason in {
+            "stop", "length", "tool_calls", "function_call", "content_filter"
+        }:
+            safe_finish_reason = finish_reason
+        else:
+            safe_finish_reason = "unknown"
+        return {
+            "choices_count": len(choices) if isinstance(choices, list) else 0,
+            "message_type": (
+                "object" if isinstance(message, dict) else "missing" if message is None else "other"
+            ),
+            "content_type": (
+                "missing" if not isinstance(message, dict) or "content" not in message
+                else "null" if content is None
+                else "string" if isinstance(content, str)
+                else "other"
+            ),
+            "content_empty": content is None or (isinstance(content, str) and not content.strip()),
+            "reasoning_present": isinstance(message, dict) and "reasoning" in message,
+            "reasoning_type": (
+                "missing" if not isinstance(message, dict) or "reasoning" not in message
+                else "null" if reasoning is None
+                else "string" if isinstance(reasoning, str)
+                else "other"
+            ),
+            "tool_calls_present": isinstance(message, dict) and "tool_calls" in message,
+            "tool_calls_count": len(tool_calls) if isinstance(tool_calls, list) else 0,
+            "finish_reason": safe_finish_reason,
+            "usage_present": "usage" in body,
+        }
 
     @staticmethod
     def _annotate_parser_failure(

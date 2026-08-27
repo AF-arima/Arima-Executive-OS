@@ -78,6 +78,22 @@ GroqParserFailureDetail = Literal[
     "exception",
     "unknown",
 ]
+GroqFinishReason = Literal[
+    "stop", "length", "tool_calls", "function_call", "content_filter", "unknown", "missing"
+]
+
+
+class GroqResponseShape(StrictSchema):
+    choices_count: int = Field(ge=0)
+    message_type: Literal["object", "missing", "other"]
+    content_type: Literal["string", "null", "missing", "other"]
+    content_empty: bool
+    reasoning_present: bool
+    reasoning_type: Literal["string", "null", "missing", "other"]
+    tool_calls_present: bool
+    tool_calls_count: int = Field(ge=0)
+    finish_reason: GroqFinishReason
+    usage_present: bool
 
 
 class GroqSmokeTestResponse(StrictSchema):
@@ -95,6 +111,7 @@ class GroqSmokeTestResponse(StrictSchema):
     failure_class: GroqFailureCategory | None = None
     parser_failure_stage: GroqParserFailureStage | None = None
     parser_failure_detail: GroqParserFailureDetail | None = None
+    response_shape: GroqResponseShape | None = None
 
 
 class FounderFeedError(StrictSchema):

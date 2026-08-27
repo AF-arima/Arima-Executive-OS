@@ -27,6 +27,7 @@ from app.schemas.auth import CurrentUserResponse, RoleAssignmentRequest
 from app.schemas.founder import (
     FounderDataFeeds,
     FounderSystemHealth,
+    GroqResponseShape,
     FounderVoiceGrantTargetRead,
     FounderWorkspaceAgentGrantRead,
     GroqSmokeTestResponse,
@@ -143,6 +144,15 @@ def _groq_parser_failure_details(failure: dict[str, object]) -> dict[str, str | 
             detail if isinstance(detail, str) and detail in _GROQ_PARSER_FAILURE_DETAILS else None
         ),
     }
+
+
+def _groq_response_shape(value: object) -> GroqResponseShape | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return GroqResponseShape.model_validate(value)
+    except Exception:
+        return None
 
 
 @router.post(
@@ -269,6 +279,7 @@ async def founder_groq_smoke_test(
         )
         failure_details = _groq_failure_details(failure, error)
         parser_details = _groq_parser_failure_details(failure)
+        response_shape = _groq_response_shape(failure.get("response_shape"))
         return GroqSmokeTestResponse(
             success=False,
             http_status_category=(
@@ -287,13 +298,17 @@ async def founder_groq_smoke_test(
             ),
             **failure_details,
             **parser_details,
+            response_shape=response_shape,
         )
     elapsed_ms = round((perf_counter() - started) * 1000, 2)
     response_event = next(
         (
             event
             for event in reversed(events)
-            if event.get("event") == "provider_response_received"
+            if event.get("event") in {
+                "provider_attempt_success",
+                "provider_response_received",
+            }
         ),
         {},
     )
@@ -312,6 +327,7 @@ async def founder_groq_smoke_test(
             if any(event.get("event") == "provider_attempt_success" for event in events)
             else "fail"
         ),
+        response_shape=_groq_response_shape(response_event.get("response_shape")),
     )
 
 

@@ -110,6 +110,7 @@ def test_groq_smoke_uses_fixed_request_once_and_returns_sanitized_success(
         "failure_class": None,
         "parser_failure_stage": None,
         "parser_failure_detail": None,
+        "response_shape": None,
     }
     assert observed == {
         "calls": 1,

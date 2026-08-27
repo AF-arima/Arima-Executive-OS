@@ -337,6 +337,68 @@ def test_groq_parser_stage_is_allowlisted_in_failure_telemetry() -> None:
     assert "UNSAFE_FINISH_REASON" not in rendered
 
 
+@pytest.mark.parametrize(
+    "response_body",
+    [
+        body(),
+        {
+            "choices": [{
+                "message": {
+                    "content": "",
+                    "reasoning": "PRIVATE_REASONING_SENTINEL",
+                },
+                "finish_reason": "length",
+            }],
+            "usage": {},
+        },
+        {
+            "choices": [{"message": {"content": None}, "finish_reason": "length"}],
+        },
+        {
+            "choices": [{
+                "message": {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "PRIVATE_TOOL_ID_SENTINEL",
+                        "function": {"name": "lookup", "arguments": "PRIVATE_ARGS_SENTINEL"},
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+        },
+        {
+            "choices": [{
+                "message": {
+                    "content": "PRIVATE_CONTENT_SENTINEL",
+                    "tool_calls": [{"id": "call", "function": {"name": "lookup", "arguments": "{}"}}],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        },
+    ],
+)
+def test_groq_response_shape_contains_only_structural_metadata(
+    response_body: dict[str, object],
+) -> None:
+    shape = GroqProvider._response_shape(response_body)
+    assert set(shape) == {
+        "choices_count", "message_type", "content_type", "content_empty",
+        "reasoning_present", "reasoning_type", "tool_calls_present",
+        "tool_calls_count", "finish_reason", "usage_present",
+    }
+    rendered = repr(shape)
+    assert all(
+        sentinel not in rendered
+        for sentinel in (
+            "PRIVATE_REASONING_SENTINEL",
+            "PRIVATE_TOOL_ID_SENTINEL",
+            "PRIVATE_ARGS_SENTINEL",
+            "PRIVATE_CONTENT_SENTINEL",
+        )
+    )
+
+
 def test_groq_normalization_failure_reports_safe_stage(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[tuple[str, dict[str, object]]] = []
     observer = VoiceExecutionObserver(
