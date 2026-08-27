@@ -55,6 +55,29 @@ GroqFailureCategory = Literal[
 ]
 
 GroqExceptionType = GroqFailureCategory
+GroqParserFailureStage = Literal[
+    "json_decode",
+    "response_object",
+    "choices_missing",
+    "choices_empty",
+    "message_invalid",
+    "content_invalid",
+    "content_empty",
+    "tool_calls_invalid",
+    "finish_reason_invalid",
+    "usage_invalid",
+    "normalization",
+    "unknown",
+]
+GroqParserFailureDetail = Literal[
+    "missing_field",
+    "wrong_type",
+    "empty_value",
+    "unsupported_value",
+    "malformed_structure",
+    "exception",
+    "unknown",
+]
 
 
 class GroqSmokeTestResponse(StrictSchema):
@@ -70,6 +93,8 @@ class GroqSmokeTestResponse(StrictSchema):
     http_status: int | None = Field(default=None, ge=100, le=599)
     exception_type: GroqExceptionType | None = None
     failure_class: GroqFailureCategory | None = None
+    parser_failure_stage: GroqParserFailureStage | None = None
+    parser_failure_detail: GroqParserFailureDetail | None = None
 
 
 class FounderFeedError(StrictSchema):

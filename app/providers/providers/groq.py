@@ -154,19 +154,29 @@ class GroqProvider(ProviderAdapter):
                     duration_ms=round((perf_counter() - started) * 1000, 2),
                     **diagnostics,
                 )
-            body = self._response_body(response)
-            content, finish_reason, tool_calls = self._completion(body)
-            usage = self._usage(body)
-            result = CompletionResponse(
-                provider=self.provider,
-                model=(body.get("model") if isinstance(body.get("model"), str) else request.model),
-                content=content,
-                usage=usage,
-                estimated_cost=self.estimate_cost(usage, model=request.model),
-                finish_reason=finish_reason,
-                tool_calls=tool_calls,
-                metadata={"response_id": body.get("id") if isinstance(body.get("id"), str) else None},
-            )
+            try:
+                body = self._response_body(response)
+                content, finish_reason, tool_calls = self._completion(body)
+                usage = self._usage(body)
+            except ProviderUnavailable:
+                raise
+            except Exception as error:
+                self._annotate_parser_failure(error, "unknown", "exception")
+                raise
+            try:
+                result = CompletionResponse(
+                    provider=self.provider,
+                    model=(body.get("model") if isinstance(body.get("model"), str) else request.model),
+                    content=content,
+                    usage=usage,
+                    estimated_cost=self.estimate_cost(usage, model=request.model),
+                    finish_reason=finish_reason,
+                    tool_calls=tool_calls,
+                    metadata={"response_id": body.get("id") if isinstance(body.get("id"), str) else None},
+                )
+            except Exception as error:
+                self._annotate_parser_failure(error, "normalization", "exception")
+                raise
             if observer is not None:
                 observer.emit(
                     "provider_attempt_success",
@@ -192,6 +202,8 @@ class GroqProvider(ProviderAdapter):
                     duration_ms=round((perf_counter() - started) * 1000, 2),
                     status_code=getattr(error, "status_code", None),
                     status_category=http_status_category(getattr(error, "status_code", None)),
+                    parser_failure_stage=getattr(error, "parser_failure_stage", None),
+                    parser_failure_detail=getattr(error, "parser_failure_detail", None),
                     **diagnostics,
                 )
             raise
@@ -240,8 +252,29 @@ class GroqProvider(ProviderAdapter):
         }
 
     @staticmethod
-    def _parser_failure(message: str) -> ProviderUnavailable:
-        return ProviderUnavailable(message, safe_failure_category="parser_error")
+    def _parser_failure(
+        message: str,
+        stage: str,
+        detail: str,
+    ) -> ProviderUnavailable:
+        return ProviderUnavailable(
+            message,
+            safe_failure_category="parser_error",
+            parser_failure_stage=stage,
+            parser_failure_detail=detail,
+        )
+
+    @staticmethod
+    def _annotate_parser_failure(
+        error: BaseException,
+        stage: str,
+        detail: str,
+    ) -> None:
+        try:
+            error.parser_failure_stage = stage  # type: ignore[attr-defined]
+            error.parser_failure_detail = detail  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     async def _post(
         self,
@@ -305,32 +338,70 @@ class GroqProvider(ProviderAdapter):
             body = response.json()
         except ValueError as error:
             raise GroqProvider._parser_failure(
-                "Groq provider returned invalid JSON"
+                "Groq provider returned invalid JSON", "json_decode", "exception"
             ) from error
         if not isinstance(body, dict):
-            raise GroqProvider._parser_failure("Groq provider returned an invalid response")
+            raise GroqProvider._parser_failure(
+                "Groq provider returned an invalid response",
+                "response_object",
+                "wrong_type",
+            )
         return body
 
     @classmethod
     def _completion(cls, body: Mapping[str, Any]) -> tuple[str, str, tuple[ProviderToolCall, ...]]:
         choices = body.get("choices")
-        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-            raise cls._parser_failure("Groq provider returned no usable output")
+        if "choices" not in body:
+            raise cls._parser_failure(
+                "Groq provider returned no usable output", "choices_missing", "missing_field"
+            )
+        if not isinstance(choices, list):
+            raise cls._parser_failure(
+                "Groq provider returned no usable output", "choices_missing", "wrong_type"
+            )
+        if not choices:
+            raise cls._parser_failure(
+                "Groq provider returned no usable output", "choices_empty", "empty_value"
+            )
+        if not isinstance(choices[0], dict):
+            raise cls._parser_failure(
+                "Groq provider returned no usable output",
+                "choices_missing",
+                "malformed_structure",
+            )
         choice = choices[0]
         message = choice.get("message")
+        if "message" not in choice:
+            raise cls._parser_failure(
+                "Groq provider returned no usable message", "message_invalid", "missing_field"
+            )
         if not isinstance(message, dict):
-            raise cls._parser_failure("Groq provider returned no usable message")
-        content = message.get("content") or ""
+            raise cls._parser_failure(
+                "Groq provider returned no usable message", "message_invalid", "wrong_type"
+            )
+        content = message.get("content")
+        if content is None:
+            content = ""
         if not isinstance(content, str):
-            raise cls._parser_failure("Groq provider returned invalid content")
+            raise cls._parser_failure(
+                "Groq provider returned invalid content", "content_invalid", "wrong_type"
+            )
         tool_calls = cls._tool_calls(message.get("tool_calls"))
         finish_reason = choice.get("finish_reason")
         if finish_reason not in cls._finish_reasons:
-            raise cls._parser_failure("Groq provider returned an invalid finish reason")
+            raise cls._parser_failure(
+                "Groq provider returned an invalid finish reason",
+                "finish_reason_invalid",
+                "unsupported_value",
+            )
         if finish_reason == "tool_calls" and not tool_calls:
-            raise cls._parser_failure("Groq provider returned empty tool calls")
+            raise cls._parser_failure(
+                "Groq provider returned empty tool calls", "tool_calls_invalid", "empty_value"
+            )
         if finish_reason in {"stop", "length"} and not content.strip():
-            raise cls._parser_failure("Groq provider returned empty output")
+            raise cls._parser_failure(
+                "Groq provider returned empty output", "content_empty", "empty_value"
+            )
         return content.strip(), finish_reason, tool_calls
 
     @staticmethod
@@ -338,26 +409,44 @@ class GroqProvider(ProviderAdapter):
         if raw is None:
             return ()
         if not isinstance(raw, list):
-            raise GroqProvider._parser_failure("Groq provider returned malformed tool calls")
+            raise GroqProvider._parser_failure(
+                "Groq provider returned malformed tool calls", "tool_calls_invalid", "wrong_type"
+            )
         result = []
         for item in raw:
             if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-                raise GroqProvider._parser_failure("Groq provider returned malformed tool call")
+                raise GroqProvider._parser_failure(
+                    "Groq provider returned malformed tool call",
+                    "tool_calls_invalid",
+                    "malformed_structure",
+                )
             function = item.get("function")
             if not isinstance(function, dict) or not isinstance(function.get("name"), str):
-                raise GroqProvider._parser_failure("Groq provider returned malformed tool call")
+                raise GroqProvider._parser_failure(
+                    "Groq provider returned malformed tool call",
+                    "tool_calls_invalid",
+                    "malformed_structure",
+                )
             arguments = function.get("arguments", "{}")
             if not isinstance(arguments, str):
-                raise GroqProvider._parser_failure("Groq provider returned malformed tool arguments")
+                raise GroqProvider._parser_failure(
+                    "Groq provider returned malformed tool arguments",
+                    "tool_calls_invalid",
+                    "wrong_type",
+                )
             try:
                 decoded = json.loads(arguments)
             except (TypeError, ValueError) as error:
                 raise GroqProvider._parser_failure(
-                    "Groq provider returned invalid tool arguments"
+                    "Groq provider returned invalid tool arguments",
+                    "tool_calls_invalid",
+                    "malformed_structure",
                 ) from error
             if not isinstance(decoded, dict):
                 raise GroqProvider._parser_failure(
-                    "Groq provider tool arguments must be an object"
+                    "Groq provider tool arguments must be an object",
+                    "tool_calls_invalid",
+                    "wrong_type",
                 )
             result.append(ProviderToolCall(function["name"], item["id"], decoded))
         return tuple(result)
@@ -382,7 +471,9 @@ class GroqProvider(ProviderAdapter):
     def _usage(body: Mapping[str, Any]) -> TokenUsage:
         usage = body.get("usage")
         if not isinstance(usage, dict):
-            raise GroqProvider._parser_failure("Groq provider returned invalid token usage")
+            raise GroqProvider._parser_failure(
+                "Groq provider returned invalid token usage", "usage_invalid", "wrong_type"
+            )
         prompt_tokens = usage.get("prompt_tokens")
         completion_tokens = usage.get("completion_tokens")
         if (
@@ -390,5 +481,7 @@ class GroqProvider(ProviderAdapter):
             or not isinstance(completion_tokens, int) or isinstance(completion_tokens, bool)
             or prompt_tokens < 0 or completion_tokens < 0
         ):
-            raise GroqProvider._parser_failure("Groq provider returned invalid token usage")
+            raise GroqProvider._parser_failure(
+                "Groq provider returned invalid token usage", "usage_invalid", "wrong_type"
+            )
         return TokenUsage(prompt_tokens, completion_tokens)

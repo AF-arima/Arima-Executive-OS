@@ -61,6 +61,17 @@ _GROQ_FAILURE_CATEGORIES = frozenset(
         "unknown",
     }
 )
+_GROQ_PARSER_FAILURE_STAGES = frozenset(
+    {
+        "json_decode", "response_object", "choices_missing", "choices_empty",
+        "message_invalid", "content_invalid", "content_empty", "tool_calls_invalid",
+        "finish_reason_invalid", "usage_invalid", "normalization", "unknown",
+    }
+)
+_GROQ_PARSER_FAILURE_DETAILS = frozenset(
+    {"missing_field", "wrong_type", "empty_value", "unsupported_value",
+     "malformed_structure", "exception", "unknown"}
+)
 
 
 def _groq_failure_details(
@@ -118,6 +129,19 @@ def _groq_failure_details(
         "http_status": safe_status,
         "exception_type": exception_type,
         "failure_class": failure_class,
+    }
+
+
+def _groq_parser_failure_details(failure: dict[str, object]) -> dict[str, str | None]:
+    stage = failure.get("parser_failure_stage")
+    detail = failure.get("parser_failure_detail")
+    return {
+        "parser_failure_stage": (
+            stage if isinstance(stage, str) and stage in _GROQ_PARSER_FAILURE_STAGES else None
+        ),
+        "parser_failure_detail": (
+            detail if isinstance(detail, str) and detail in _GROQ_PARSER_FAILURE_DETAILS else None
+        ),
     }
 
 
@@ -244,6 +268,7 @@ async def founder_groq_smoke_test(
             {},
         )
         failure_details = _groq_failure_details(failure, error)
+        parser_details = _groq_parser_failure_details(failure)
         return GroqSmokeTestResponse(
             success=False,
             http_status_category=(
@@ -261,6 +286,7 @@ async def founder_groq_smoke_test(
                 else normalized_failure_class(error)
             ),
             **failure_details,
+            **parser_details,
         )
     elapsed_ms = round((perf_counter() - started) * 1000, 2)
     response_event = next(

@@ -228,6 +228,148 @@ def test_groq_parser_fails_closed(response_body: dict[str, object]) -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("response_body", "stage", "detail"),
+    [
+        ({}, "choices_missing", "missing_field"),
+        ({"choices": "invalid"}, "choices_missing", "wrong_type"),
+        ({"choices": []}, "choices_empty", "empty_value"),
+        ({"choices": ["invalid"]}, "choices_missing", "malformed_structure"),
+        ({"choices": [{}]}, "message_invalid", "missing_field"),
+        ({"choices": [{"message": "invalid"}]}, "message_invalid", "wrong_type"),
+        ({"choices": [{"message": {"content": 1}}]}, "content_invalid", "wrong_type"),
+        ({"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]}, "content_empty", "empty_value"),
+        ({"choices": [{"message": {"content": "ok", "tool_calls": "invalid"}, "finish_reason": "stop"}]}, "tool_calls_invalid", "wrong_type"),
+        ({"choices": [{"message": {"content": "ok", "tool_calls": [{"id": 1}]}, "finish_reason": "stop"}]}, "tool_calls_invalid", "malformed_structure"),
+        ({"choices": [{"message": {"content": "ok", "tool_calls": [{"id": "id", "function": "invalid"}]}, "finish_reason": "stop"}]}, "tool_calls_invalid", "malformed_structure"),
+        ({"choices": [{"message": {"content": "ok", "tool_calls": [{"id": "id", "function": {"name": "fn", "arguments": 1}}]}, "finish_reason": "stop"}]}, "tool_calls_invalid", "wrong_type"),
+        ({"choices": [{"message": {"content": "ok", "tool_calls": [{"id": "id", "function": {"name": "fn", "arguments": "["}}]}, "finish_reason": "stop"}]}, "tool_calls_invalid", "malformed_structure"),
+        ({"choices": [{"message": {"content": "ok", "tool_calls": [{"id": "id", "function": {"name": "fn", "arguments": "[]"}}]}, "finish_reason": "stop"}]}, "tool_calls_invalid", "wrong_type"),
+        ({"choices": [{"message": {"content": "ok"}, "finish_reason": "invalid"}]}, "finish_reason_invalid", "unsupported_value"),
+        ({"choices": [{"message": {"content": "", "tool_calls": []}, "finish_reason": "tool_calls"}]}, "tool_calls_invalid", "empty_value"),
+    ],
+)
+def test_groq_completion_parser_reports_safe_failure_stage(
+    response_body: dict[str, object], stage: str, detail: str
+) -> None:
+    with pytest.raises(ProviderUnavailable) as caught:
+        GroqProvider._completion(response_body)
+    error = caught.value
+    assert error.parser_failure_stage == stage
+    assert error.parser_failure_detail == detail
+
+
+def test_groq_body_parser_reports_decode_and_response_object_stages() -> None:
+    with pytest.raises(ProviderUnavailable) as invalid_json:
+        GroqProvider._response_body(httpx.Response(200, content=b"{"))
+    assert invalid_json.value.parser_failure_stage == "json_decode"
+    assert invalid_json.value.parser_failure_detail == "exception"
+
+    with pytest.raises(ProviderUnavailable) as invalid_object:
+        GroqProvider._response_body(httpx.Response(200, json=[]))
+    assert invalid_object.value.parser_failure_stage == "response_object"
+    assert invalid_object.value.parser_failure_detail == "wrong_type"
+
+
+def test_groq_unexpected_parser_exception_reports_unknown() -> None:
+    class UnexpectedResponse:
+        status_code = 200
+
+        def json(self) -> object:
+            raise RuntimeError("secret response detail")
+
+    class FakeClient:
+        async def post(self, *args: object, **kwargs: object) -> UnexpectedResponse:
+            del args, kwargs
+            return UnexpectedResponse()
+
+    async def scenario() -> None:
+        with pytest.raises(RuntimeError) as caught:
+            await GroqProvider(config(), client=FakeClient()).complete(request())
+        assert caught.value.parser_failure_stage == "unknown"
+        assert caught.value.parser_failure_detail == "exception"
+
+    asyncio.run(scenario())
+
+
+def test_groq_usage_parser_reports_safe_stage() -> None:
+    with pytest.raises(ProviderUnavailable) as caught:
+        GroqProvider._usage({"usage": {"prompt_tokens": "secret", "completion_tokens": 1}})
+    assert caught.value.parser_failure_stage == "usage_invalid"
+    assert caught.value.parser_failure_detail == "wrong_type"
+    assert "secret" not in repr(caught.value)
+
+
+def test_groq_parser_stage_is_allowlisted_in_failure_telemetry() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    observer = VoiceExecutionObserver(
+        None,
+        "safe-session",
+        sink=lambda event, payload: events.append((event, payload)),
+    )
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "secret completion"}, "finish_reason": "UNSAFE_FINISH_REASON"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    async def scenario() -> None:
+        metadata = {
+            "_voice_observer": observer,
+            "voice_session_id": observer.session_id,
+            "voice_trace_id": observer.request_id,
+        }
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(ProviderUnavailable) as caught:
+                await GroqProvider(config(), client=client).complete(request(**metadata))
+            assert caught.value.parser_failure_stage == "finish_reason_invalid"
+
+    asyncio.run(scenario())
+    failure = events[-1][1]
+    assert failure["parser_failure_stage"] == "finish_reason_invalid"
+    assert failure["parser_failure_detail"] == "unsupported_value"
+    rendered = repr(events)
+    assert "secret completion" not in rendered
+    assert "UNSAFE_FINISH_REASON" not in rendered
+
+
+def test_groq_normalization_failure_reports_safe_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    observer = VoiceExecutionObserver(
+        None,
+        "safe-session",
+        sink=lambda event, payload: events.append((event, payload)),
+    )
+    def fail(*args: object, **kwargs: object) -> float:
+        del args, kwargs
+        raise RuntimeError("secret normalization detail")
+
+    monkeypatch.setattr(GroqProvider, "estimate_cost", fail)
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body())
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            metadata = {
+                "_voice_observer": observer,
+                "voice_session_id": observer.session_id,
+                "voice_trace_id": observer.request_id,
+            }
+            with pytest.raises(RuntimeError):
+                await GroqProvider(config(), client=client).complete(request(**metadata))
+
+    asyncio.run(scenario())
+    failure = events[-1][1]
+    assert failure["parser_failure_stage"] == "normalization"
+    assert failure["parser_failure_detail"] == "exception"
+    assert "secret normalization detail" not in repr(events)
+
+
 def test_groq_telemetry_is_sanitized_and_factory_is_explicit() -> None:
     events: list[tuple[str, dict[str, object]]] = []
     observer = VoiceExecutionObserver(
