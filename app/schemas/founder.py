@@ -40,6 +40,18 @@ class FounderSystemHealth(StrictSchema):
     components: list[FounderHealthComponent]
 
 
+class GroqSmokeTestResponse(StrictSchema):
+    success: bool
+    provider: Literal["groq"] = "groq"
+    model: Literal["openai/gpt-oss-20b"] = "openai/gpt-oss-20b"
+    http_status_category: str | None = None
+    elapsed_ms: float
+    parser: Literal["pass", "fail"]
+    completion_matches: bool
+    telemetry: Literal["pass", "fail"]
+    error: str | None = None
+
+
 class FounderFeedError(StrictSchema):
     code: str
     message: str

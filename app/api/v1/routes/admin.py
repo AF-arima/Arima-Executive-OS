@@ -1,4 +1,5 @@
 from typing import Annotated
+from time import perf_counter
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -15,12 +16,20 @@ from app.database.repositories.agent import AgentDefinitionRepository
 from app.database.repositories.workspace import WorkspaceRepository
 from app.database.session import get_session
 from app.intelligence.access import AgentGrantService, IntelligenceAccessError
+from app.providers import (
+    CompletionRequest,
+    ProviderFactory,
+    ProviderMessage,
+    ProviderName,
+)
+from app.providers.types import MessageRole
 from app.schemas.auth import CurrentUserResponse, RoleAssignmentRequest
 from app.schemas.founder import (
     FounderDataFeeds,
     FounderSystemHealth,
     FounderVoiceGrantTargetRead,
     FounderWorkspaceAgentGrantRead,
+    GroqSmokeTestResponse,
     ManualObservationCreate,
     ManualObservationRead,
 )
@@ -30,6 +39,7 @@ from app.services.audit import record_audit
 from app.services.voice_authorization_diagnostic import (
     VoiceAuthorizationDiagnosticService,
 )
+from app.voice.observability import VoiceExecutionObserver, normalized_failure_class
 
 router = APIRouter(prefix="/admin", tags=["administration"])
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
@@ -108,6 +118,98 @@ async def founder_voice_authorization_diagnostic(
     return await VoiceAuthorizationDiagnosticService(session).inspect(
         session_id,
         operator=current_user,
+    )
+
+
+@router.post(
+    "/founder/diagnostics/groq-smoke",
+    response_model=GroqSmokeTestResponse,
+)
+async def founder_groq_smoke_test(
+    request: Request,
+    current_user: FounderControlUser,
+) -> GroqSmokeTestResponse:
+    del current_user
+    require_valid_csrf(request)
+    events: list[dict[str, object]] = []
+    observer = VoiceExecutionObserver(
+        None,
+        uuid4(),
+        sink=lambda _event, payload: events.append(payload),
+    )
+    completion_request = CompletionRequest(
+        model="openai/gpt-oss-20b",
+        messages=(
+            ProviderMessage(
+                role=MessageRole.USER,
+                content="Reply with exactly: GROQ_SMOKE_OK",
+            ),
+        ),
+        max_output_tokens=32,
+        metadata={
+            "_voice_observer": observer,
+            "voice_session_id": observer.session_id,
+            "voice_trace_id": observer.request_id,
+        },
+    )
+    started = perf_counter()
+    try:
+        provider = ProviderFactory().create(
+            provider=ProviderName.GROQ,
+            model="openai/gpt-oss-20b",
+        )
+        result = await provider.complete(completion_request)
+    except Exception as error:
+        elapsed_ms = round((perf_counter() - started) * 1000, 2)
+        failure = next(
+            (
+                event
+                for event in reversed(events)
+                if event.get("event") == "provider_attempt_failure"
+            ),
+            {},
+        )
+        return GroqSmokeTestResponse(
+            success=False,
+            http_status_category=(
+                failure.get("status_category")
+                if isinstance(failure.get("status_category"), str)
+                else None
+            ),
+            elapsed_ms=elapsed_ms,
+            parser="fail",
+            completion_matches=False,
+            telemetry="pass" if failure else "fail",
+            error=(
+                failure.get("failure_class")
+                if isinstance(failure.get("failure_class"), str)
+                else normalized_failure_class(error)
+            ),
+        )
+    elapsed_ms = round((perf_counter() - started) * 1000, 2)
+    response_event = next(
+        (
+            event
+            for event in reversed(events)
+            if event.get("event") == "provider_response_received"
+        ),
+        {},
+    )
+    return GroqSmokeTestResponse(
+        success=True,
+        http_status_category=(
+            response_event.get("status_category")
+            if isinstance(response_event.get("status_category"), str)
+            else "2xx"
+        ),
+        elapsed_ms=elapsed_ms,
+        parser="pass",
+        completion_matches=result.content == "GROQ_SMOKE_OK",
+        telemetry=(
+            "pass"
+            if any(event.get("event") == "provider_attempt_success" for event in events)
+            else "fail"
+        ),
     )
 
 
