@@ -8,6 +8,9 @@ from pydantic import SecretStr
 import pytest
 
 from app.core.config import Settings
+from app.orchestration.exceptions import OrchestrationFallbackExhausted
+from app.orchestration.fallback import OrchestrationFallback
+from app.orchestration.policy import OrchestrationPolicy
 from app.providers import (
     AuthenticationFailure,
     CompletionRequest,
@@ -92,6 +95,212 @@ def test_groq_maps_chat_request_and_response() -> None:
             assert result.usage.total_tokens == 12
 
     asyncio.run(scenario())
+
+
+def test_groq_accepts_length_with_content() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body(content="TRUNCATED_OK", finish_reason="length"))
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            result = await GroqProvider(config(), client=client).complete(request())
+            assert result.content == "TRUNCATED_OK"
+            assert result.finish_reason == "length"
+
+    asyncio.run(scenario())
+
+
+def test_groq_rejects_empty_length_with_safe_category() -> None:
+    with pytest.raises(ProviderUnavailable) as caught:
+        GroqProvider._completion(body(content="", finish_reason="length"))
+    assert caught.value.parser_failure_stage == "content_empty"
+    assert caught.value.parser_failure_detail == "empty_value"
+
+
+def test_groq_ignores_reasoning_field_when_content_is_valid() -> None:
+    response_body = body(content="VISIBLE_OK")
+    response_body["choices"][0]["message"]["reasoning"] = "private reasoning"
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response_body)
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            result = await GroqProvider(config(), client=client).complete(request())
+            assert result.content == "VISIBLE_OK"
+
+    asyncio.run(scenario())
+
+
+def test_groq_request_timeout_uses_shared_event_loop_clock() -> None:
+    provider = GroqProvider(config(), timeout_seconds=60.0)
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        request_with_deadline = request(
+            execution_deadline_monotonic=loop.time() + 20,
+        )
+        timeout = provider._request_timeout(request_with_deadline)
+        assert 17.0 < timeout <= 18.0
+
+    asyncio.run(scenario())
+
+
+def test_groq_insufficient_budget_fails_before_http_and_logs_safe_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    posts = 0
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        posts += 1
+        return httpx.Response(200, json=body())
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        request_with_deadline = request(
+            execution_deadline_monotonic=loop.time() + 4,
+            voice_session_id="safe-session",
+        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(ProviderTimeout):
+                await GroqProvider(config(), client=client).complete(request_with_deadline)
+
+    with caplog.at_level("WARNING", logger="arima.provider.execution"):
+        asyncio.run(scenario())
+    warning = next(
+        record
+        for record in caplog.records
+        if record.name == "arima.provider.execution"
+        and record.message == "provider_timeout_budget_insufficient"
+    )
+    assert warning.voice_session_id == "safe-session"
+    assert 0 < warning.deadline_remaining_ms < 4_000
+    assert posts == 0
+
+
+def test_groq_fallback_recomputes_remaining_budget_each_attempt() -> None:
+    provider = GroqProvider(config())
+    observed_timeouts: list[float] = []
+
+    async def scenario() -> None:
+        deadline = asyncio.get_running_loop().time() + 10
+
+        async def operation() -> None:
+            request_with_deadline = request(
+                execution_deadline_monotonic=deadline,
+            )
+            observed_timeouts.append(provider._request_timeout(request_with_deadline))
+            await asyncio.sleep(0.01)
+            raise ProviderTimeout("safe timeout")
+
+        with pytest.raises(OrchestrationFallbackExhausted):
+            await OrchestrationFallback(
+                OrchestrationPolicy(maximum_retries=1)
+            ).retry(operation)
+
+    asyncio.run(scenario())
+    assert len(observed_timeouts) == 2
+    assert observed_timeouts[1] < observed_timeouts[0]
+
+
+def test_groq_preemptive_and_in_request_timeout_follow_same_fallback_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def run(
+        provider: GroqProvider,
+        request_with_metadata: CompletionRequest,
+    ) -> list[tuple[str, dict[str, object]]]:
+        events: list[tuple[str, dict[str, object]]] = []
+        observer = VoiceExecutionObserver(
+            None,
+            "safe-session",
+            sink=lambda event, payload: events.append((event, payload)),
+        )
+        request_with_metadata.metadata["_voice_observer"] = observer
+
+        async def operation() -> None:
+            request_with_metadata.metadata["provider_attempt"] = int(
+                request_with_metadata.metadata.get("provider_attempt", 0)
+            ) + 1
+            await provider.complete(request_with_metadata)
+
+        with pytest.raises(OrchestrationFallbackExhausted):
+            await OrchestrationFallback(
+                OrchestrationPolicy(maximum_retries=1)
+            ).retry(operation, observer=observer.emit, provider_name="groq")
+        return events
+
+    async def scenario() -> None:
+        preemptive_posts = 0
+
+        async def preemptive_handler(_: httpx.Request) -> httpx.Response:
+            nonlocal preemptive_posts
+            preemptive_posts += 1
+            return httpx.Response(200, json=body())
+
+        preemptive_request = request(
+            execution_deadline_monotonic=asyncio.get_running_loop().time() + 4,
+            provider_attempt=0,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(preemptive_handler)
+        ) as client:
+            preemptive_events = await run(
+                GroqProvider(config(), client=client), preemptive_request
+            )
+
+        in_request_posts = 0
+
+        async def in_request_handler(_: httpx.Request) -> httpx.Response:
+            nonlocal in_request_posts
+            in_request_posts += 1
+            raise httpx.ReadTimeout("private transport detail")
+
+        in_request_request = request(provider_attempt=0)
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(in_request_handler)
+        ) as client:
+            in_request_events = await run(
+                GroqProvider(config(), client=client), in_request_request
+            )
+
+        def comparable(
+            events: list[tuple[str, dict[str, object]]],
+        ) -> list[tuple[str, object, object, object, object]]:
+            fallback_events = {
+                "provider_attempt_started",
+                "provider_attempt_failed",
+                "retry_started",
+                "provider_fallback",
+                "provider_fallback_exhausted",
+            }
+            return [
+                (
+                    event,
+                    payload.get("attempt"),
+                    payload.get("outcome"),
+                    payload.get("failure_class"),
+                    payload.get("exception_type"),
+                )
+                for event, payload in events
+                if event in fallback_events
+            ]
+
+        assert comparable(preemptive_events) == comparable(in_request_events)
+        assert preemptive_posts == 0
+        assert in_request_posts == 2
+        assert all("private transport detail" not in repr(payload) for _, payload in in_request_events)
+
+    with caplog.at_level("WARNING", logger="arima.provider.execution"):
+        asyncio.run(scenario())
+    warnings = [
+        record
+        for record in caplog.records
+        if record.name == "arima.provider.execution"
+        and record.message == "provider_timeout_budget_insufficient"
+    ]
+    assert len(warnings) == 2
 
 
 def test_groq_maps_json_mode_and_tool_calls() -> None:

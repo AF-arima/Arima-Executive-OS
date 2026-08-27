@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
+import asyncio
 import json
+import logging
 from time import perf_counter
 from typing import Any
 
@@ -36,6 +38,12 @@ from app.voice.observability import (
     normalized_failure_class,
     observer_from_metadata,
 )
+
+
+logger = logging.getLogger("arima.provider.execution")
+
+SAFETY_MARGIN_SECONDS = 2.0
+MIN_TIMEOUT_SECONDS = 5.0
 
 
 class GroqProvider(ProviderAdapter):
@@ -138,11 +146,22 @@ class GroqProvider(ProviderAdapter):
         if request.json_mode:
             payload["response_format"] = {"type": "json_object"}
         try:
+            request_timeout = self._request_timeout(request)
             if self._client is not None:
-                response = await self._post(self._client, headers, payload)
+                response = await self._post(
+                    self._client,
+                    headers,
+                    payload,
+                    timeout=request_timeout,
+                )
             else:
-                async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-                    response = await self._post(client, headers, payload)
+                async with httpx.AsyncClient(timeout=request_timeout) as client:
+                    response = await self._post(
+                        client,
+                        headers,
+                        payload,
+                        timeout=request_timeout,
+                    )
             if observer is not None:
                 observer.emit(
                     "provider_response_received",
@@ -248,6 +267,28 @@ class GroqProvider(ProviderAdapter):
         if any(message.images for message in request.messages):
             raise ProviderConfigurationError("Groq text API does not support images")
 
+    def _request_timeout(self, request: CompletionRequest) -> float:
+        deadline = request.metadata.get("execution_deadline_monotonic")
+        if not isinstance(deadline, (int, float)):
+            return self._timeout_seconds
+
+        remaining = deadline - asyncio.get_running_loop().time()
+        budget = remaining - SAFETY_MARGIN_SECONDS
+        if budget < MIN_TIMEOUT_SECONDS:
+            logger.warning(
+                "provider_timeout_budget_insufficient",
+                extra={
+                    "voice_session_id": (
+                        request.metadata.get("voice_session_id")
+                        if isinstance(request.metadata.get("voice_session_id"), str)
+                        else None
+                    ),
+                    "deadline_remaining_ms": round(max(remaining, 0) * 1000, 2),
+                },
+            )
+            raise ProviderTimeout("Groq request timed out")
+        return min(budget, self._timeout_seconds)
+
     @staticmethod
     def _diagnostic_fields(request: CompletionRequest) -> dict[str, object]:
         return {
@@ -328,9 +369,15 @@ class GroqProvider(ProviderAdapter):
         client: httpx.AsyncClient,
         headers: Mapping[str, str],
         payload: Mapping[str, object],
+        timeout: float | None = None,
     ) -> httpx.Response:
         try:
-            response = await client.post(self.api_url, headers=headers, json=payload)
+            response = await client.post(
+                self.api_url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
         except httpx.TimeoutException as error:
             raise ProviderTimeout(
                 "Groq request timed out",
