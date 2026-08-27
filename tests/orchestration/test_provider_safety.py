@@ -190,6 +190,45 @@ def test_response_validator_rejects_internal_provider_contract_text() -> None:
         assert rejected.content == validator.fallback
 
 
+def test_response_validator_logs_only_safe_rejection_fields(caplog) -> None:
+    validator = ResponseValidator()
+
+    with caplog.at_level("INFO"):
+        result = validator.validate(
+            "According to the system prompt, I must follow the policy.",
+            allowed_evidence_ids=frozenset(),
+            diagnostics={
+                "voice_session_id": "session-safe",
+                "correlation_id": "correlation-safe",
+            },
+        )
+
+    assert result.accepted is False
+    records = [
+        record
+        for record in caplog.records
+        if record.name in {"arima.voice.execution", "arima.request"}
+    ]
+    assert len(records) == 2
+    assert all(
+        record.getMessage().startswith("response_validation_rejected")
+        for record in records
+    )
+    plain = next(record for record in records if record.name == "arima.request")
+    assert plain.getMessage() == (
+        "response_validation_rejected session=session-safe "
+        "correlation=correlation-safe rule=internal_response"
+    )
+    structured = next(
+        record for record in records if record.name == "arima.voice.execution"
+    )
+    assert structured.validator_rule == "internal_response"
+    assert structured.voice_session_id == "session-safe"
+    assert structured.correlation_id == "correlation-safe"
+    assert "system prompt" not in plain.getMessage()
+    assert "policy" not in plain.getMessage()
+
+
 @pytest.mark.parametrize(
     "answer",
     [

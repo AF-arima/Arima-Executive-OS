@@ -256,6 +256,10 @@ class OrchestrationPipeline(HealthContract):
                 for item in context.request.metadata.get("evidence_ids", [])
             ),
             request_mode=self.provider_prompt.request_mode(context.request.content),
+            diagnostics={
+                "voice_session_id": observer.session_id if observer is not None else None,
+                "correlation_id": context.correlation_id,
+            },
         )
         deterministic_market_response = market_response(
             actions, language=detect_response_language(context.request.content)
@@ -268,6 +272,10 @@ class OrchestrationPipeline(HealthContract):
                     for item in context.request.metadata.get("evidence_ids", [])
                 ),
                 request_mode="market",
+                diagnostics={
+                    "voice_session_id": observer.session_id if observer is not None else None,
+                    "correlation_id": context.correlation_id,
+                },
             )
         tool_actions = [
             action

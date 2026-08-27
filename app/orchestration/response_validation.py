@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import re
+from collections.abc import Mapping
+
+
+logger = logging.getLogger("arima.voice.execution")
+plain_logger = logging.getLogger("arima.request")
 
 _MAX_RESPONSE_LENGTH = 4_000
 _ACTION_CLAIM = re.compile(
@@ -55,16 +61,17 @@ class ResponseValidator:
         *,
         allowed_evidence_ids: frozenset[str],
         request_mode: str = "evidence_backed",
+        diagnostics: Mapping[str, object] | None = None,
     ) -> ValidatedResponse:
         value = content.strip()
         if not value or len(value) > _MAX_RESPONSE_LENGTH:
-            return self._fallback("empty_or_too_long")
+            return self._fallback("empty_or_too_long", diagnostics=diagnostics)
         if any(ord(character) < 32 and character not in "\n\r\t" for character in value):
-            return self._fallback("malformed")
+            return self._fallback("malformed", diagnostics=diagnostics)
         if _INTERNAL_RESPONSE.search(value):
-            return self._fallback("internal_response")
+            return self._fallback("internal_response", diagnostics=diagnostics)
         if _ACTION_CLAIM.search(value) or _ACTION_DIRECTIVE.search(value):
-            return self._fallback("action_claim")
+            return self._fallback("action_claim", diagnostics=diagnostics)
         if (
             request_mode != "conversation"
             and _STATE_CLAIM.search(value)
@@ -72,10 +79,34 @@ class ResponseValidator:
         ):
             cited = frozenset(re.findall(r"\[evidence:([^\]]+)\]", value))
             if not cited.intersection(allowed_evidence_ids):
-                return self._fallback("unsupported_state_claim")
+                return self._fallback("unsupported_state_claim", diagnostics=diagnostics)
         return ValidatedResponse(content=value, accepted=True)
 
-    def _fallback(self, reason: str) -> ValidatedResponse:
+    def _fallback(
+        self,
+        reason: str,
+        *,
+        diagnostics: Mapping[str, object] | None = None,
+    ) -> ValidatedResponse:
+        session_id = diagnostics.get("voice_session_id") if diagnostics else None
+        correlation_id = diagnostics.get("correlation_id") if diagnostics else None
+        safe_session = session_id if isinstance(session_id, str) else None
+        safe_correlation = correlation_id if isinstance(correlation_id, str) else None
+        logger.info(
+            "response_validation_rejected",
+            extra={
+                "event": "response_validation_rejected",
+                "validator_rule": reason,
+                "voice_session_id": safe_session,
+                "correlation_id": safe_correlation,
+            },
+        )
+        plain_logger.warning(
+            "response_validation_rejected "
+            f"session={safe_session} "
+            f"correlation={safe_correlation} "
+            f"rule={reason}"
+        )
         return ValidatedResponse(
             content=self.fallback,
             accepted=False,
